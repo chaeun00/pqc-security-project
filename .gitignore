@@ -1,0 +1,55 @@
+# ========================
+# 보안 — 절대 커밋 금지
+# ========================
+.env
+*.env
+!*.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.jks
+
+# ========================
+# Python (crypto-engine)
+# ========================
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ========================
+# Spring Boot (api-gateway)
+# ========================
+target/
+*.jar
+*.war
+*.class
+.gradle/
+build/
+
+# ========================
+# React (dashboard)
+# ========================
+node_modules/
+dist/
+build/
+.next/
+
+# ========================
+# Docker / 인프라 런타임 데이터
+# ========================
+infra/grafana/data/
+infra/prometheus/data/
+
+# ========================
+# OS / IDE
+# ========================
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
