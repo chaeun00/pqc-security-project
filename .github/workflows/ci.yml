@@ -1,0 +1,82 @@
+# ==============================================================
+# CI — Step 1-A: Cosign 이미지 서명 검증 + Trivy 스캔
+# rev.7: DCT(Notary v1) → Cosign(Sigstore) keyless verify 전환
+# ==============================================================
+name: Step 1-A CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── test-dct (Cosign keyless verify) ──────────────────────
+  test-dct:
+    name: Cosign 이미지 서명 검증
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cosign 설치
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: "[Stage 1-1] OCI 서명 레이어 확인: cgr.dev/chainguard/postgres:latest"
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "https://github.com/chainguard-images/.*" \
+            cgr.dev/chainguard/postgres:latest \
+            > /dev/null 2>&1 \
+            && echo "PASS ✓ — OCI 서명 레이어 확인" \
+            || { echo "FAIL — 서명 레이어 없음"; exit 1; }
+
+      - name: "[Stage 1-2] Sigstore keyless 서명 검증: cgr.dev/chainguard/postgres:latest"
+        run: |
+          if cosign verify \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-identity-regexp "https://github.com/chainguard-images/.*" \
+              cgr.dev/chainguard/postgres:latest > /dev/null 2>&1; then
+            echo "PASS ✓ — keyless 서명 검증 통과"
+          else
+            echo "FAIL — keyless 서명 검증 실패"
+            exit 1
+          fi
+
+      - name: "[Stage 2-1] 서명 없음 사전 확인: postgres:16-alpine"
+        run: |
+          if ! cosign verify postgres:16-alpine > /dev/null 2>&1; then
+            echo "PASS ✓ — Cosign 서명 없음 확인 (미서명 대상 적합)"
+          else
+            echo "FAIL — Cosign 서명 발견 (미서명 테스트 불가)"
+            exit 1
+          fi
+
+      - name: "[Stage 2-2] cosign verify 거부 확인 + stderr 원인 캡처"
+        run: |
+          ERR=$(cosign verify postgres:16-alpine 2>&1) && RC=0 || RC=$?
+          if [ $RC -ne 0 ]; then
+            if echo "$ERR" | grep -qiE "(no matching signatures|no signatures found)"; then
+              echo "PASS ✓ — 거부 원인: no matching signatures"
+            else
+              echo "PASS ✓ — 거부됨. 원인: $(echo "$ERR" | head -1)"
+            fi
+          else
+            echo "FAIL — 미서명 이미지가 검증됨 (예상치 않은 결과)"
+            exit 1
+          fi
+
+  # ── trivy ─────────────────────────────────────────────────
+  trivy:
+    name: Trivy Critical 스캔 (postgres:16-alpine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy 스캔
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: postgres:16-alpine
+          severity: CRITICAL
+          exit-code: "1"
+          format: table

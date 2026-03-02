@@ -53,18 +53,32 @@ dashboard (React)  ← CBOM 시각화 / Prometheus·Grafana 연동
 
 ```
 pqc-security-project/
+├── Makefile                         # 빌드·테스트 진입점 (rev.6)
 ├── docker-compose.yml
 ├── .env.example
+├── .github/
+│   └── workflows/
+│       └── ci.yml                   # Cosign + Trivy CI (rev.7)
+├── scripts/
+│   └── setup-cosign.sh              # ★ 신규 — cosign 로컬 설치 (rev.7)
 ├── config/                          # K8s ConfigMap/Secret 대체용
 │   ├── crypto-engine.env.example
 │   ├── api-gateway.env.example
 │   └── dashboard.env.example
 ├── crypto-engine/
+│   ├── Dockerfile
+│   ├── requirements/               # ★ 신규
+│   │   ├── base.txt                # 공통 (fastapi, pydantic 등)
+│   │   ├── prod.txt                # -r base.txt + 운영 전용 (gunicorn 등)
+│   │   └── dev.txt                 # -r base.txt + 개발 전용 (pytest, httpx 등)
 │   └── app/
-│       ├── routers/                 # /kem, /dsa, /sign, /verify
+│       ├── main.py
+│       ├── routers/                # /kem, /dsa, /sign, /verify
 │       ├── services/
 │       └── schemas/
 ├── api-gateway/
+│   ├── Dockerfile
+│   ├── pom.xml                     # Maven scope으로 의존성 분리
 │   └── src/main/java/com/pqc/gateway/
 │       ├── jwt/                     # ML-DSA JWT 발급·검증
 │       ├── config/
@@ -74,6 +88,8 @@ pqc-security-project/
 │       ├── entity/
 │       └── repository/
 ├── dashboard/
+│   ├── Dockerfile
+│   ├── package.json                # dependencies / devDependencies 분리
 │   └── src/features/
 │       ├── cbom/
 │       ├── inventory/               # 수동 재고 등록 UI
@@ -91,7 +107,7 @@ pqc-security-project/
 ## 인수조건
 
 1. `POST /api/encrypt` 전 구간 정상 동작 + CBOM 자동 기록 + 수동 자산 등록·조회 가능
-2. ML-DSA JWT 정상 발급·검증 + Rootless Docker + Trivy Critical 0건 + 미인증 403
+2. ML-DSA JWT 정상 발급·검증 + `make test-dct` 전 환경 통과 + Trivy Critical 0건 + 미인증 403
 3. 환경변수 교체만으로 다른 호스트 기동 가능 + 알고리즘 전환 시 CBOM 이력 반영
 
 ## 인프라 결정사항
@@ -102,20 +118,57 @@ pqc-security-project/
 | JWT | Spring Boot 직접 발급, ML-DSA 서명을 Python 엔진 호출로 이식 |
 | CBOM | 자동 로깅(Primary) + 수동 재고 등록(Secondary) 하이브리드 |
 
-## 빠른 시작 (Phase 1에서 작성 예정)
+## 빠른 시작
 
 ```bash
-# 환경변수 설정
+# 1. 루트 환경변수 설정 (POSTGRES_PASSWORD 반드시 변경)
 cp .env.example .env
 
-# 서비스 실행
-docker compose up -d
+# 2. 서비스별 환경변수 설정
+cp config/crypto-engine.env.example config/crypto-engine.env
+cp config/api-gateway.env.example   config/api-gateway.env
+cp config/dashboard.env.example     config/dashboard.env
 
-# 헬스체크
-curl http://localhost:8080/actuator/health
-curl http://localhost:8000/health
+# 3. cosign 설치 (최초 1회)
+make setup
+
+# 4. Step 1-A 검증 (Cosign keyless 서명 검증, rev.7)
+make test-dct
+
+# 5. 서비스 실행 (Step 1-B Dockerfile 완료 후)
+make up
+
+# 5. 헬스체크 및 Resource Limits 확인
+curl http://localhost:8000/health           # crypto-engine
+curl http://localhost:8080/actuator/health  # api-gateway
+make ps                                    # stats 포함
+
+# 6. Trivy 취약점 스캔
+make trivy
 ```
+
+## 보안 아키텍처
+
+| 항목 | 구현 방식 |
+|---|---|
+| 비루트 컨테이너 | 각 Dockerfile Stage 2에 `USER nonroot` 지시어 (rev.5) |
+| 최소 권한 | `cap_drop: ALL` + `db`만 init 필수 cap 추가 |
+| 이미지 서명 검증 | Cosign(Sigstore) keyless verify — `make test-dct` (rev.7) |
+| 이미지 빌드 보호 | `DOCKER_CONTENT_TRUST=1` — `make up/build` 인라인 주입 (rev.6) |
+| 네트워크 격리 | `pqc-internal` (internal: true) / `pqc-public` 분리 |
+| Rootless Docker | 프로덕션 서버 운영 정책 (아래 참조) |
+
+> **Rootless Docker (프로덕션 서버 운영 정책)**
+> ```bash
+> apt install uidmap slirp4netns
+> dockerd-rootless-setuptool.sh install
+> systemctl --user enable docker
+> echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock' >> ~/.bashrc
+> # 검증: docker info | grep rootless
+> # 제약: 1024 이하 포트 바인딩 불가 (8080/8000/5432는 무방)
+> ```
 
 ## 문서
 
-- [`docs/plan.md`](docs/plan.md) — 구현 계획 (rev.1)
+- [`docs/plan.md`](docs/plan.md) — 구현 계획 (rev.7)
+- [`Makefile`](Makefile) — 빌드·테스트 진입점 (`make help`로 타겟 목록 확인)

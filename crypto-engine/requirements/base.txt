@@ -1,0 +1,7 @@
+# crypto-engine 공통 의존성 (개발·운영 공유)
+# Step 1-B에서 버전 고정(pip freeze) 예정
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+oqs>=0.10.0           # liboqs-python wrapper (ML-KEM / ML-DSA)

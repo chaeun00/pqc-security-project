@@ -1,0 +1,138 @@
+name: pqc-security-project
+
+# ============================================================
+# Step 1-A: Docker 보안 기반
+#   - cap_drop: ALL (최소 권한 원칙)
+#   - DOCKER_CONTENT_TRUST: 이미지 서명 검증
+#   - 네트워크 분리: pqc-internal(내부) / pqc-public(외부 노출)
+#   - Resource Limits: ${VAR:-기본값} 환경변수 외재화
+# ============================================================
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # crypto-engine — FastAPI + liboqs (Dockerfile: Step 1-B)
+  # ──────────────────────────────────────────────────────────
+  crypto-engine:
+    build:
+      context: ./crypto-engine
+    networks:
+      - pqc-internal
+    cap_drop:
+      - ALL
+    env_file:
+      - config/crypto-engine.env
+    deploy:
+      resources:
+        limits:
+          cpus: "${CRYPTO_ENGINE_CPU_LIMIT}"
+          memory: "${CRYPTO_ENGINE_MEM_LIMIT}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────
+  # api-gateway — Spring Boot (Dockerfile: Step 1-B)
+  # ──────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./api-gateway
+    networks:
+      - pqc-internal
+      - pqc-public
+    ports:
+      - "8080:8080"
+    cap_drop:
+      - ALL
+    env_file:
+      - config/api-gateway.env
+    deploy:
+      resources:
+        limits:
+          cpus: "${API_GATEWAY_CPU_LIMIT}"
+          memory: "${API_GATEWAY_MEM_LIMIT}"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      crypto-engine:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────────────
+  # dashboard — React (Dockerfile: Step 3)
+  # ──────────────────────────────────────────────────────────
+  dashboard:
+    build:
+      context: ./dashboard
+    networks:
+      - pqc-public
+    ports:
+      - "3000:3000"
+    cap_drop:
+      - ALL
+    env_file:
+      - config/dashboard.env
+    deploy:
+      resources:
+        limits:
+          cpus: "${DASHBOARD_CPU_LIMIT}"
+          memory: "${DASHBOARD_MEM_LIMIT}"
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────
+  # db — PostgreSQL 16 (스키마: Step 1-C)
+  # ──────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    networks:
+      - pqc-internal
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN       # init: data 디렉터리 소유권 변경
+      - SETUID      # gosu: postgres 유저로 전환
+      - SETGID      # gosu: postgres 그룹으로 전환
+      - DAC_OVERRIDE # init: 권한 불일치 파일 접근
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-pqc}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-pqc_db}"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPU_LIMIT}"
+          memory: "${DB_MEM_LIMIT}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pqc} -d ${POSTGRES_DB:-pqc_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+# ============================================================
+# Networks
+#   pqc-internal: internal: true → 외부 인터넷 차단
+#                 crypto-engine ↔ api-gateway ↔ db 전용
+#   pqc-public:   외부 노출 — api-gateway(8080) + dashboard(3000)
+# ============================================================
+networks:
+  pqc-internal:
+    driver: bridge
+    internal: true
+  pqc-public:
+    driver: bridge
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  db-data:
+    driver: local
