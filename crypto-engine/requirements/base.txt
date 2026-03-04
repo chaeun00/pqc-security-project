@@ -4,4 +4,4 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.6.0
 python-dotenv>=1.0.0
-oqs>=0.10.0           # liboqs-python wrapper (ML-KEM / ML-DSA)
+liboqs-python   # liboqs-python wrapper (ML-KEM / ML-DSA)

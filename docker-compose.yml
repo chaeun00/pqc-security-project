@@ -25,10 +25,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${CRYPTO_ENGINE_CPU_LIMIT}"
-          memory: "${CRYPTO_ENGINE_MEM_LIMIT}"
+          cpus: "${CRYPTO_ENGINE_CPU_LIMIT:-1.0}"
+          memory: "${CRYPTO_ENGINE_MEM_LIMIT:-512m}"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,8 +53,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${API_GATEWAY_CPU_LIMIT}"
-          memory: "${API_GATEWAY_MEM_LIMIT}"
+          cpus: "${API_GATEWAY_CPU_LIMIT:-0.5}"
+          memory: "${API_GATEWAY_MEM_LIMIT:-512m}"
     restart: unless-stopped
     depends_on:
       db:
@@ -79,8 +79,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${DASHBOARD_CPU_LIMIT}"
-          memory: "${DASHBOARD_MEM_LIMIT}"
+          cpus: "${DASHBOARD_CPU_LIMIT:-0.25}"
+          memory: "${DASHBOARD_MEM_LIMIT:-128m}"
     restart: unless-stopped
 
   # ──────────────────────────────────────────────────────────
@@ -107,8 +107,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${DB_CPU_LIMIT}"
-          memory: "${DB_MEM_LIMIT}"
+          cpus: "${DB_CPU_LIMIT:-0.5}"
+          memory: "${DB_MEM_LIMIT:-256m}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pqc} -d ${POSTGRES_DB:-pqc_db}"]
       interval: 10s

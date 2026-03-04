@@ -9,6 +9,7 @@ secrets/
 *.key
 *.p12
 *.jks
+.cosign/
 
 # ========================
 # Python (crypto-engine)

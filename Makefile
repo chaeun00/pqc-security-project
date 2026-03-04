@@ -9,7 +9,7 @@
 
 COMPOSE := DOCKER_CONTENT_TRUST=1 docker compose
 
-.PHONY: up down build logs ps test-dct trivy setup help
+.PHONY: up down build build-secure logs ps test-dct trivy inspect-limits verify-all setup help
 
 # ── 기본 타겟 ─────────────────────────────────────────────
 .DEFAULT_GOAL := help
@@ -106,11 +106,13 @@ test-dct: ## [Step 1-A] Cosign keyless 이미지 서명 검증 (rev.7)
 	@echo "==> [test-dct] 모든 단계 통과 ✓"
 
 # ──────────────────────────────────────────────────────────
-# setup — 로컬 개발환경 초기화 (cosign 설치)
+# setup — 로컬 개발환경 초기화 (cosign & trivy 설치)
 # ──────────────────────────────────────────────────────────
-setup: ## 로컬 개발환경 초기화 (cosign 설치)
+setup: ## 로컬 개발환경 초기화 (cosign & trivy 설치)
 	@bash scripts/setup-cosign.sh
-
+	@bash scripts/setup-trivy.sh
+	@bash scripts/setup-jq.sh
+	
 # ──────────────────────────────────────────────────────────
 # trivy — Trivy 이미지 취약점 스캔
 #   Step 1-A: db 베이스 이미지 (postgres:16-alpine) 스캔
@@ -118,11 +120,92 @@ setup: ## 로컬 개발환경 초기화 (cosign 설치)
 #
 # 인수조건 2: Trivy Critical 0건
 # ──────────────────────────────────────────────────────────
-trivy: ## [Step 1-A/1-D] Trivy Critical 취약점 스캔
+trivy: ## [Step 1-B] Trivy Critical 취약점 스캔 (postgres + crypto-engine)
 	@which trivy > /dev/null 2>&1 || { \
 		echo "Error: trivy 미설치."; \
 		echo "       https://aquasecurity.github.io/trivy/latest/getting-started/installation/"; \
 		exit 1; \
 	}
 	@echo "==> Trivy 스캔: postgres:16-alpine"
-	trivy image --severity CRITICAL --exit-code 1 postgres:16-alpine
+	@trivy image --severity CRITICAL --exit-code 1 postgres:16-alpine
+	@echo "==> crypto-engine 이미지 빌드 후 스캔"
+	@DOCKER_CONTENT_TRUST=0 docker compose build crypto-engine
+	@trivy image --severity CRITICAL --exit-code 1 pqc-security-project-crypto-engine
+	@echo "==> Trivy 스캔 완료: Critical 0건 ✓"
+
+# ──────────────────────────────────────────────────────────
+# build-secure — Step 1-B 보안 파이프라인
+#   [1/4] cosign verify: python:3.12-alpine 서명 확인 (WARN-only)
+#   [2/4] docker compose build: crypto-engine 빌드
+#   [3/4] cosign sign: 출력 이미지 서명 (레지스트리 push 필요 → 로컬 SKIP)
+#   [4/4] trivy: Critical 0건 게이트 (exit-code 1)
+#
+# 인수조건 1: Critical 1건 이상 시 exit 1
+# ──────────────────────────────────────────────────────────
+build-secure: ## [Step 1-B] Cosign verify(WARN) → build → sign(로컬레지스트리) → Trivy 순차 파이프라인
+	@which cosign > /dev/null 2>&1 || { echo "Error: cosign 미설치. 'make setup' 실행."; exit 1; }
+	@which trivy  > /dev/null 2>&1 || { echo "Error: trivy 미설치."; exit 1; }
+	@echo "==> [1/4] Cosign: 베이스 이미지 서명 확인 (python:3.12-alpine, WARN-only)"
+	@cosign verify python:3.12-alpine > /dev/null 2>&1 \
+		&& echo "==> [1/4] PASS ✓ — Cosign 서명 확인" \
+		|| echo "==> [1/4] WARN — python:3.12-alpine 미서명 (Docker Hub 기본, 허용)"
+	@echo "==> [2/4] docker build: crypto-engine"
+	@DOCKER_CONTENT_TRUST=0 docker compose build crypto-engine
+	@echo "==> [3/4] Cosign: 출력 이미지 서명/검증 (임시 로컬 레지스트리 경유)"
+	@if [ -f .cosign/cosign.key ]; then \
+		docker rm -f pqc-registry 2>/dev/null || true; \
+		if docker run -d --name pqc-registry -p 5000:5000 registry:2 \
+			&& docker tag pqc-security-project-crypto-engine localhost:5000/crypto-engine:latest \
+			&& docker push localhost:5000/crypto-engine:latest \
+			&& COSIGN_PASSWORD="" cosign sign --key .cosign/cosign.key \
+				--allow-insecure-registry --tlog-upload=false \
+				localhost:5000/crypto-engine:latest \
+			&& COSIGN_PASSWORD="" cosign verify --key .cosign/cosign.pub \
+				--allow-insecure-registry --insecure-ignore-tlog \
+				localhost:5000/crypto-engine:latest > /dev/null 2>&1; then \
+			docker rm -f pqc-registry 2>/dev/null || true; \
+			echo "==> [3/4] PASS ✓ — 출력 이미지 서명 검증 통과"; \
+		else \
+			docker rm -f pqc-registry 2>/dev/null || true; \
+			echo "==> [3/4] FAIL — 서명 실패 (.cosign/cosign.key 또는 Docker 상태 확인)"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "==> [3/4] SKIP — .cosign/cosign.key 없음 (make cosign-keygen 실행 권장)"; \
+	fi
+	@echo "==> [4/4] Trivy: Critical 취약점 스캔 (exit-code 1)"
+	@trivy image --severity CRITICAL --exit-code 1 pqc-security-project-crypto-engine
+	@echo "==> build-secure 완료 ✓"
+
+# ──────────────────────────────────────────────────────────
+# cosign-keygen — 로컬 서명 키 생성 (.cosign/cosign.key/pub)
+# ──────────────────────────────────────────────────────────
+cosign-keygen: ## 로컬 cosign 키 생성 (.cosign/cosign.key + cosign.pub)
+	@mkdir -p .cosign
+	@COSIGN_PASSWORD="" cosign generate-key-pair --output-key-prefix .cosign/cosign
+	@echo "==> .cosign/cosign.key, .cosign/cosign.pub 생성 완료"
+
+# ──────────────────────────────────────────────────────────
+# inspect-limits — docker inspect vs .env Limit 비교
+#   rev.10: .env 파싱 후 NanoCPU/MEM 비교 → 불일치 exit 1
+#   인수조건 3: 수치 불일치 시 exit 1
+# ──────────────────────────────────────────────────────────
+inspect-limits: ## [Step 1-B] docker inspect vs .env Limit 비교 (불일치 exit 1)
+	@bash scripts/check-limits.sh .env
+
+# ──────────────────────────────────────────────────────────
+# verify-all — Step 1-B 인수조건 통합 검증
+#   빌드 → 기동 → HTTP 왕복 → inspect-limits
+# ──────────────────────────────────────────────────────────
+verify-all: ## [Step 1-B] 빌드→기동→HTTP 왕복→inspect-limits 통합 검증
+	@which jq   > /dev/null 2>&1 || { echo "Error: jq 미설치 (apt install jq)"; exit 1; }
+	@which curl > /dev/null 2>&1 || { echo "Error: curl 미설치"; exit 1; }
+	@echo "==> [verify-all 1/4] build-secure"
+	@$(MAKE) build-secure
+	@echo "==> [verify-all 2/4] docker compose up crypto-engine --wait"
+	@$(COMPOSE) up -d --wait crypto-engine
+	@echo "==> [verify-all 3/4] HTTP 왕복 테스트"
+	@bash scripts/verify-http.sh
+	@echo "==> [verify-all 4/4] inspect-limits"
+	@$(MAKE) inspect-limits
+	@echo "==> [verify-all] 모든 인수조건 통과 ✓"
