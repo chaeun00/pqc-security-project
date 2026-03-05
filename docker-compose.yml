@@ -3,6 +3,7 @@ name: pqc-security-project
 # ============================================================
 # Step 1-A: Docker 보안 기반
 #   - cap_drop: ALL (최소 권한 원칙)
+#   - security_opt: no-new-privileges:true (전 서비스 일괄, Step 1-C)
 #   - DOCKER_CONTENT_TRUST: 이미지 서명 검증
 #   - 네트워크 분리: pqc-internal(내부) / pqc-public(외부 노출)
 #   - Resource Limits: ${VAR:-기본값} 환경변수 외재화
@@ -20,6 +21,8 @@ services:
       - pqc-internal
     cap_drop:
       - ALL
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - config/crypto-engine.env
     deploy:
@@ -48,6 +51,8 @@ services:
       - "8080:8080"
     cap_drop:
       - ALL
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - config/api-gateway.env
     deploy:
@@ -74,6 +79,8 @@ services:
       - "3000:3000"
     cap_drop:
       - ALL
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - config/dashboard.env
     deploy:
@@ -84,10 +91,13 @@ services:
     restart: unless-stopped
 
   # ──────────────────────────────────────────────────────────
-  # db — PostgreSQL 16 (스키마: Step 1-C)
+  # db — PostgreSQL 17 + su-exec (스키마: Step 1-C, CVE-2025-68121 su-exec 교체)
   # ──────────────────────────────────────────────────────────
   db:
-    image: postgres:16-alpine
+    image: pqc-db:secure
+    build:
+      context: ./db
+      dockerfile: Dockerfile.db
     networks:
       - pqc-internal
     cap_drop:
@@ -96,7 +106,9 @@ services:
       - CHOWN       # init: data 디렉터리 소유권 변경
       - SETUID      # gosu: postgres 유저로 전환
       - SETGID      # gosu: postgres 그룹으로 전환
-      - DAC_OVERRIDE # init: 권한 불일치 파일 접근
+      - DAC_OVERRIDE # init: 권한 불일치 파일 접근 (보상통제: cap_drop+no-new-priv+uid=70)
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: "${POSTGRES_USER:-pqc}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}"

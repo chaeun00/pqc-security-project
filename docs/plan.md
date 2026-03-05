@@ -441,5 +441,125 @@ check-limits.sh 자체도 CRLF → set -euo pipefail\r 실패
 2. make build-secure → 4개 서비스 순서 실행, exit 0
 
 ### 질문(Questions):
-1. db trivy 실패 시 전체 차단 여부 — postgres:16-alpine Trivy Critical 발견 시 나머지 서비스 빌드를 막을지, 경고만 출력하고 계속 진행할지?
-2. build-secure 실행 순서 — db → crypto-engine 순서(현재 compose depends_on과 일치)로 고정할지, 병렬($(MAKE) -j)로 실행할지?
+1. db trivy 실패 시 전체 차단 여부 => postgres:16-alpine Trivy Critical 발견 시 전체 빌드를 차단(Fail)
+2. build-secure 실행 순서 — db → crypto-engine 순서(현재 compose depends_on과 일치)로 고정한다. 병렬 실행 시 오류로 인해 파이프라인이 불안정해질 위험.
+
+---
+## [2026-03-05] CVE-2025-68121 수정 계획
+
+**목표:** postgres:16-alpine 내 gosu Go stdlib CVE-2025-68121 제거 → build-secure-db Trivy 스캔 통과
+
+**질문:**
+1. postgres:17-alpine으로 교체 가능한가, 16 유지 필요한가? => 교체 가능하다.
+2. gosu가 런타임에서 실제 사용되는가? (삭제 가능 여부) => 런타임에서 사용되므로 삭제하면 안된다.
+3. 현재 Trivy 실패가 CI/CD를 블로킹하는가? => 그렇다.
+
+**범위:**
+- Step 1: 패치된 postgres:16-alpine 태그에서 gosu Go 버전 확인
+- Step 2: 방법 A(태그 핀닝) > 방법 B(gosu 레이어 교체) > 방법 C(.trivyignore) 순 선택
+- Step 3: make build-secure-db 재실행으로 CRITICAL 0건 확인
+
+**인수조건:**
+1. trivy --exit-code 1 exit-code 0 종료
+2. CVE-2025-68121 CRITICAL 미출력
+3. make build-secure-db 완료 ✓ 출력
+
+---
+## [2026-03-05] CVE-2025-68121 대안 해결 계획 (su-exec 교체)
+
+**목표:** gosu(Go 바이너리) → su-exec(C 구현체) 교체로 Go stdlib 취약점 원천 제거
+
+**질문:**
+1. 커스텀 Dockerfile.db 추가 허용 여부? => 가능하다.
+2. su-exec으로 권한 강등 기능 완전 대체 가능 여부? => 가능하다.
+3. VEX 예외처리가 보안 정책상 허용되는지? => 허용하지 않겠다.
+
+**범위:**
+- Step 1: su-exec(A안) 선택 — C 구현체, Go 의존 없음
+- Step 2: Dockerfile.db 작성 — gosu 제거 + su-exec 설치 레이어
+- Step 3: Makefile build-secure-db 스캔 대상을 pqc-db:secure로 변경
+
+**인수조건:**
+1. trivy CRITICAL 0건 (CVE-2025-68121 미검출)
+2. su-exec에 Go stdlib 의존성 없음 확인
+3. postgres 컨테이너 정상 기동 및 권한 강등 동작 유지
+
+---
+## [2026-03-05] CVE-2025-68121 재수정 계획 (rm -f 우회 실패 → Multi-stage 덮어쓰기)
+
+**목표:** Trivy 레이어별 스캔 우회 불가 문제 해결 → COPY 덮어쓰기로 취약 바이너리 대체
+
+**근본원인:** RUN rm -f는 최종 FS에서만 제거, Trivy는 하위 레이어도 독립 스캔
+
+**범위:**
+- Step 1: su-exec 대체 + OpenVEX 문서화
+- Step 2: Dockerfile.db Multi-stage — alpine:3.21에서 su-exec 복사 → gosu 경로 덮어쓰기
+- Step 3: trivy --vex docs/vex.json 플래그 추가
+
+**인수조건:**
+1. trivy CRITICAL 0건 (CVE-2025-68121 미검출)
+2. gosu 경로에서 권한 강등 정상 동작
+3. file 명령으로 최종 바이너리가 Go 바이너리 아님 확인
+
+---
+## [2026-03-05] 잔존 위험 및 테스트 공백 수정 계획
+
+**무시 항목:** cbom_assets.updated_at 트리거(앱 레이어 처리), user_id 컬럼(전역 테이블 의도적 설계), SQL 순서(알파벳 보장)
+
+**cbom_assets 설계 의도 명시:**
+cbom_assets는 전역(global) CBOM 테이블로 의도적으로 user_id 없이 설계됨.
+사용자별 필터링이 필요한 경우 Step 1-D에서 스키마 변경 검토.
+
+**범위:**
+- Step 1: Makefile up 타겟에 pqc-db:secure 이미지 존재 guard 추가
+- Step 2: 001_schema.sql에 sessions/key_metadata user_id B-Tree 인덱스 추가
+- Step 3: scripts/test-db-schema.sh 작성 + make test-db 타겟 등록
+
+**인수조건:**
+1. make up 미빌드 상태 에러 메시지 + exit 1
+2. make test-db → 테이블 4개 + 인덱스 6개 + su-exec uid=70 확인
+3. psql \di 결과에 신규 인덱스 2개 포함
+
+---
+## [2026-03-05] USER postgres 제거 및 entrypoint 권한 강등 패턴 전환
+
+**목표:** Dockerfile.db의 USER postgres 제거 → runtime entrypoint gosu 방식으로 최소 권한 유지
+
+**보안 레이어 구조 (확정):**
+- Layer 1: cap_drop: ALL (docker-compose.yml) — 위험 capability 원천 차단
+- Layer 2: entrypoint gosu (런타임) — root → postgres(uid=70) exec 교체
+- Layer 3: Trivy+VEX (CI 게이트) — 빌드 시점 취약점 차단
+
+**범위:**
+- Step 1: Dockerfile.db에서 USER postgres 줄 제거
+- Step 2: test-db-schema.sh 테스트 명령에 --user root 추가
+- Step 3: 보안 레이어 구조 plan.md 명시
+
+**인수조건:**
+1. docker run --user root pqc-db:secure gosu postgres id → uid=70(postgres)
+2. docker compose up db 후 docker top db → postgres uid=70 확인
+3. make test-db → [3/3] PASS ✓
+
+---
+## [2026-03-05] no-new-privileges 추가 및 보안 검증 테스트 확장
+
+**목표:** MEDIUM 위험 해소 + CapEff/setuid 검증 추가
+
+**DAC_OVERRIDE 허용 사유 (문서화):**
+- postgres entrypoint init 필수 (data dir 접근)
+- 보상 통제: cap_drop:ALL + no-new-privileges:true + uid=70 런타임
+- 재검토: Step 2-A 커스텀 entrypoint 도입 시
+
+**질문**
+- no-new-privileges: true 추가 시 docker-compose.yml의 db 서비스에만 적용할까, 모든 서비스에 일괄 적용할까? => 모든 서비스 일괄 적용
+- CapEff 검증 테스트를 make test-db에 통합할까, 별도 make test-security 타겟으로 분리할까? => `make test-db` 통합 후 추후 래핑
+
+**범위:**
+- Step 1: docker-compose.yml db 서비스에 security_opt: no-new-privileges:true 추가
+- Step 2: test-db-schema.sh에 CapEff=0 확인 + setuid 바이너리 없음 확인 추가
+- Step 3: DAC_OVERRIDE 허용 사유 plan.md 명시
+
+**인수조건:**
+1. docker inspect → SecurityOpt no-new-privileges:true 확인
+2. CapEff: 0000000000000000
+3. setuid 바이너리 없음 (find 빈 출력)

@@ -1,0 +1,29 @@
+# ============================================================
+# db/Dockerfile.db — PQC Security Project DB 이미지 (Multi-stage)
+#
+# CVE-2025-68121 수정: Multi-stage COPY 덮어쓰기
+#   근본원인: RUN rm -f는 whiteout만 생성, Trivy는 하위 레이어도 독립 스캔
+#   해결: alpine:3.21 빌더에서 su-exec(C) 복사 → gosu 경로 덮어쓰기
+#         최종 이미지 /usr/local/bin/gosu 실체는 C 바이너리
+# ============================================================
+
+# ── Stage 1: su-exec 바이너리 추출 ──────────────────────────
+FROM alpine:3.21 AS builder
+
+RUN apk add --no-cache su-exec
+
+# ── Stage 2: postgres 최종 이미지 ───────────────────────────
+FROM postgres:17-alpine
+
+USER root
+
+# gosu 경로에 su-exec 바이너리 COPY 덮어쓰기
+# - RUN rm + symlink 방식은 Trivy 하위 레이어 스캔에서 gosu 잔존 탐지
+# - COPY로 동일 경로 덮어쓰면 최종 FS의 실체가 C 바이너리로 교체됨
+COPY --from=builder /sbin/su-exec /usr/local/bin/gosu
+
+# USER postgres 제거 — 최소 권한은 entrypoint의 gosu(su-exec)가 처리
+# 보안 레이어 구조:
+#   Layer 1: cap_drop: ALL (docker-compose.yml) — capability 원천 차단
+#   Layer 2: entrypoint gosu (런타임) — root → postgres(uid=70) exec 교체
+#   Layer 3: Trivy+VEX (CI 게이트) — 빌드 시점 취약점 차단

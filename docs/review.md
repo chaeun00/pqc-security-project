@@ -27,3 +27,18 @@
 ### 즉시 해결 필요
 - inspect-limits: .env 값 파싱 후 수치 비교 + exit 1 로직 추가
 - Dockerfile: liboqs.so find 검증 RUN 삽입
+
+---
+## Review: Step 1-B Final (2026-03-05)
+
+### [HIGH] secret_key API 응답 노출 — dsa.py:30, kem.py:27
+### [HIGH] dsa_sign 매 요청 키쌍 재생성 — dsa.py:21
+### [HIGH] algorithm_factory get_kem/get_signature 미사용 (dead code + 암호 민첩성 미작동)
+### [MEDIUM] Exception str(e) 직접 노출 — kem.py:45, dsa.py:46
+### [MEDIUM] KEM encrypt = 키생성+캡슐화 1-step → KEM 보안 모델 훼손
+### [LOW] Dockerfile RUN ls 디버그 라인 잔존
+
+### 테스트 공백
+- KEM/DSA 자동화 테스트 없음
+- 잘못된 입력(빈 message, 비호환 키쌍, 지원 외 알고리즘) 엣지 케이스 미검증
+- inspect-limits 수치 비교 로직 미해결(이전 리뷰 잔존)
