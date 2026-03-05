@@ -1,0 +1,5 @@
+# security/trivy.yaml — Trivy 전역 설정
+# CI trivy 잡(pqc-db:secure 스캔)에서 trivy-action trivy-config 파라미터로 참조
+# --vex CLI 플래그와 동일: security/vex.json(OpenVEX)으로 CVE-2025-68121 억제
+vex:
+  - security/vex.json

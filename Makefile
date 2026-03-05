@@ -154,7 +154,7 @@ build-secure-db: ## [Step 1-C] db: Cosign WARN + build(multi-stage su-exec) + Tr
 	@echo "==> [build-secure-db 2/3] docker build: db (Multi-stage su-exec COPY, pqc-db:secure)"
 	@DOCKER_CONTENT_TRUST=0 docker compose build db
 	@echo "==> [build-secure-db 3/3] Trivy+VEX: pqc-db:secure Critical 취약점 스캔 (exit-code 1)"
-	@trivy image --severity CRITICAL --exit-code 1 --vex docs/vex.json pqc-db:secure
+	@trivy image --severity CRITICAL --exit-code 1 --vex security/vex.json pqc-db:secure
 	@echo "==> [build-secure-db] 완료 ✓"
 
 # ──────────────────────────────────────────────────────────

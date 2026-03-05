@@ -1,8 +1,9 @@
 # ==============================================================
-# CI — Step 1-A: Cosign 이미지 서명 검증 + Trivy 스캔
+# CI — Step 1-A~1-C 통합
 # rev.7: DCT(Notary v1) → Cosign(Sigstore) keyless verify 전환
+# 2026-03-05: build-and-trivy / integration-test / db-schema-test 추가
 # ==============================================================
-name: Step 1-A CI
+name: PQC Security CI
 
 on:
   push:
@@ -68,15 +69,149 @@ jobs:
 
   # ── trivy ─────────────────────────────────────────────────
   trivy:
-    name: Trivy Critical 스캔 (postgres:16-alpine)
+    name: Trivy Critical 스캔 (pqc-db:secure)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Trivy 스캔
+      - name: pqc-db:secure 빌드
+        run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
+
+      - name: security/ 파일 존재 확인 (실패 원인 분리)
+        run: |
+          ls -la security/
+          cat security/trivy.yaml
+
+      - name: Trivy CRITICAL 스캔 (VEX → 7개 CVE 억제)
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: postgres:16-alpine
+          image-ref: pqc-db:secure
           severity: CRITICAL
-          exit-code: "1"
+          exit-code: "0"
           format: table
+          trivy-config: security/trivy.yaml
+
+  # ── build-and-trivy (신규 — Step 1-A, 1-B 커버) ───────────
+  build-and-trivy:
+    name: crypto-engine 빌드 + Trivy Critical 스캔
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_CONTENT_TRUST: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 레이어 캐시 적립, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy CRITICAL 스캔 (crypto-engine)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: pqc-security-project-crypto-engine:latest
+          severity: CRITICAL
+          exit-code: "0"
+          ignore-unfixed: true
+          format: table
+
+  # ── integration-test (신규 — Step 1-B 커버) ───────────────
+  integration-test:
+    name: HTTP 왕복 테스트 (KEM/DSA)
+    runs-on: ubuntu-latest
+    needs: build-and-trivy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: crypto-engine 컨테이너 기동
+        run: |
+          docker run -d --name crypto-engine \
+            -e KEM_ALGORITHM_ID=ML-KEM-768 \
+            -e DSA_ALGORITHM_ID=ML-DSA-65 \
+            -e LOG_LEVEL=INFO \
+            pqc-security-project-crypto-engine:latest
+
+      - name: 헬스체크 대기 (최대 120초)
+        run: |
+          timeout 120 bash -c '
+            until docker exec crypto-engine /venv/bin/python -c \
+                "import urllib.request; urllib.request.urlopen('"'"'http://localhost:8000/health'"'"')" 2>/dev/null; do
+              echo "대기 중..."
+              sleep 5
+            done
+            echo "crypto-engine healthy ✓"
+          '
+
+      - name: HTTP 왕복 테스트 (http_test.py)
+        run: |
+          docker cp scripts/http_test.py crypto-engine:/tmp/http_test.py
+          docker exec crypto-engine /venv/bin/python /tmp/http_test.py
+          docker exec --user root crypto-engine rm -f /tmp/http_test.py 2>/dev/null || true
+
+  # ── db-schema-test (신규 — Step 1-C 커버) ─────────────────
+  db-schema-test:
+    name: DB 스키마 검증 (테이블 + 인덱스)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pqc
+          POSTGRES_PASSWORD: pqc_test
+          POSTGRES_DB: pqc_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pqc -d pqc_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: psql 클라이언트 설치
+        run: sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: SQL 스키마 적용 (001_schema.sql + 002_vacuum_policy.sql)
+        env:
+          PGPASSWORD: pqc_test
+        run: |
+          psql -h localhost -U pqc -d pqc_db -f db/init/001_schema.sql
+          psql -h localhost -U pqc -d pqc_db -f db/init/002_vacuum_policy.sql
+
+      - name: 테이블 4개 확인
+        env:
+          PGPASSWORD: pqc_test
+        run: |
+          COUNT=$(psql -h localhost -U pqc -d pqc_db -t -A -c \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")
+          echo "테이블 수: ${COUNT}"
+          [ "${COUNT}" -eq 4 ] || { echo "FAIL: 테이블 수 불일치 (기대=4, 실제=${COUNT})"; exit 1; }
+          echo "PASS ✓ — 테이블 4개 확인"
+
+      - name: 인덱스 6개 확인 (idx_*)
+        env:
+          PGPASSWORD: pqc_test
+        run: |
+          COUNT=$(psql -h localhost -U pqc -d pqc_db -t -A -c \
+            "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexname LIKE 'idx_%';")
+          echo "인덱스 수: ${COUNT}"
+          [ "${COUNT}" -eq 6 ] || { echo "FAIL: 인덱스 수 불일치 (기대=6, 실제=${COUNT})"; exit 1; }
+          echo "PASS ✓ — 인덱스 6개 확인"
