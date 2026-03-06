@@ -10,7 +10,7 @@
 
 COMPOSE := DOCKER_CONTENT_TRUST=1 docker compose
 
-.PHONY: up down build build-secure build-secure-db build-secure-crypto build-secure-gateway build-secure-dashboard logs ps test-dct test-db trivy inspect-limits verify-all setup help
+.PHONY: up down build build-secure build-secure-db build-secure-crypto build-secure-gateway build-secure-dashboard logs ps test-dct test-db trivy inspect-limits verify-all health-check health-recheck setup help
 
 # ── 기본 타겟 ─────────────────────────────────────────────
 .DEFAULT_GOAL := help
@@ -254,6 +254,16 @@ test-db: ## [Step 1-C] DB 스키마 검증 (테이블4+인덱스6+su-exec uid=70
 # ──────────────────────────────────────────────────────────
 inspect-limits: ## [Step 1-B] docker inspect vs .env Limit 비교 (불일치 exit 1)
 	@bash scripts/check-limits.sh .env
+
+# ──────────────────────────────────────────────────────────
+# health-check — Step 1-D 통합 헬스체크
+#   crypto-engine+db 기동 → healthy → KEM/DSA+스키마 검증
+# ──────────────────────────────────────────────────────────
+health-check: ## [Step 1-D] 통합 헬스체크 (crypto-engine+db 기동→KEM/DSA+스키마 검증)
+	@bash scripts/health-check-all.sh .env
+
+health-recheck: ## [Step 1-D] 재검증 (빌드 생략, NO_BUILD=1)
+	@NO_BUILD=1 bash scripts/health-check-all.sh .env
 
 # ──────────────────────────────────────────────────────────
 # verify-all — Step 1-B 인수조건 통합 검증

@@ -63,10 +63,8 @@ WORKDIR /app
 RUN chown -R nonroot:nonroot /app
 COPY --chown=nonroot:nonroot app/ /app/app/
 
-RUN ls -la /usr/lib/liboqs.so*
-
 USER nonroot
 
 EXPOSE 8000
 
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "app.main:app"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:8000", "app.main:app"]

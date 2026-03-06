@@ -3,7 +3,7 @@ import base64
 import oqs
 from fastapi import APIRouter, HTTPException
 
-from app.algorithm_factory import DSA_ALGORITHM
+from app.algorithm_factory import DSA_ALGORITHM, DSA_PUBLIC_KEY, get_signature
 from app.schemas.dsa import (
     DSASignRequest,
     DSASignResponse,
@@ -16,18 +16,15 @@ router = APIRouter()
 
 @router.post("/sign", response_model=DSASignResponse)
 def dsa_sign(req: DSASignRequest):
-    """메시지 서명 (키쌍 생성 포함)"""
-    with oqs.Signature(DSA_ALGORITHM) as sig:
-        public_key = sig.generate_keypair()
-        secret_key = sig.export_secret_key()
+    """메시지 서명 (persistent keypair 사용)"""
+    with get_signature() as sig:
         signature = sig.sign(req.message.encode())
 
     return DSASignResponse(
         algorithm=DSA_ALGORITHM,
         message=req.message,
         signature=base64.b64encode(signature).decode(),
-        public_key=base64.b64encode(public_key).decode(),
-        secret_key=base64.b64encode(secret_key).decode(),
+        public_key=base64.b64encode(DSA_PUBLIC_KEY).decode(),
     )
 
 
@@ -43,7 +40,7 @@ def dsa_verify(req: DSAVerifyRequest):
     try:
         with oqs.Signature(DSA_ALGORITHM) as sig:
             valid = sig.verify(req.message.encode(), signature_bytes, public_key_bytes)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=400, detail="서명 검증 오류")
 
     return DSAVerifyResponse(algorithm=DSA_ALGORITHM, valid=valid)

@@ -82,7 +82,9 @@ jobs:
           ls -la security/
           cat security/trivy.yaml
 
-      - name: Trivy CRITICAL 스캔 (VEX → 7개 CVE 억제)
+      - name: Trivy CRITICAL 스캔 (보고서, VEX 억제 시도)
+        # exit-code: "0" — 보고서 출력 + trivy PATH 설치 목적
+        # trivy-config의 vex: 키는 --config 경유 시 불안정 → 아래 게이트 단계에서 --vex 직접 적용
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: pqc-db:secure
@@ -90,6 +92,16 @@ jobs:
           exit-code: "0"
           format: table
           trivy-config: security/trivy.yaml
+
+      - name: Trivy CRITICAL 게이트 (--vex 직접 CLI, exit-code 1)
+        # trivy-action이 trivy를 PATH에 설치 → 직접 --vex 플래그 사용 가능
+        # 인수조건 2: 신규 CRITICAL CVE → exit 1 (VEX 7개 항목은 통과)
+        run: |
+          trivy image \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --vex security/vex.json \
+            pqc-db:secure
 
   # ── build-and-trivy (신규 — Step 1-A, 1-B 커버) ───────────
   build-and-trivy:
@@ -113,11 +125,13 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy CRITICAL 스캔 (crypto-engine)
+        # ignore-unfixed: true — upstream 미패치 CVE 제외 (alpine 기반, 수정 불가 항목 skip)
+        # exit-code: "1" — 패치 가능 CRITICAL 존재 시 빌드 차단 (인수조건 2)
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: pqc-security-project-crypto-engine:latest
           severity: CRITICAL
-          exit-code: "0"
+          exit-code: "1"
           ignore-unfixed: true
           format: table
 
@@ -152,18 +166,20 @@ jobs:
         run: |
           timeout 120 bash -c '
             until docker exec crypto-engine /venv/bin/python -c \
-                "import urllib.request; urllib.request.urlopen('"'"'http://localhost:8000/health'"'"')" 2>/dev/null; do
+                "import urllib.request; urllib.request.urlopen('"'"'http://localhost:8000/health'"'"', timeout=5)" 2>/dev/null; do
               echo "대기 중..."
               sleep 5
             done
             echo "crypto-engine healthy ✓"
           '
 
-      - name: HTTP 왕복 테스트 (http_test.py)
+      - name: HTTP 왕복 테스트 (http_test.py + test_edge.py)
         run: |
           docker cp scripts/http_test.py crypto-engine:/tmp/http_test.py
+          docker cp scripts/test_edge.py crypto-engine:/tmp/test_edge.py
           docker exec crypto-engine /venv/bin/python /tmp/http_test.py
-          docker exec --user root crypto-engine rm -f /tmp/http_test.py 2>/dev/null || true
+          docker exec crypto-engine /venv/bin/python /tmp/test_edge.py
+          docker exec --user root crypto-engine rm -f /tmp/http_test.py /tmp/test_edge.py 2>/dev/null || true
 
   # ── db-schema-test (신규 — Step 1-C 커버) ─────────────────
   db-schema-test:
@@ -215,3 +231,83 @@ jobs:
           echo "인덱스 수: ${COUNT}"
           [ "${COUNT}" -eq 6 ] || { echo "FAIL: 인덱스 수 불일치 (기대=6, 실제=${COUNT})"; exit 1; }
           echo "PASS ✓ — 인덱스 6개 확인"
+
+  # ── inspect-limits (신규 — Step 1-D 커버) ──────────────────
+  inspect-limits:
+    name: Resource Limits 검증 (check-limits.sh)
+    runs-on: ubuntu-latest
+    needs: build-and-trivy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: pqc-db:secure 빌드
+        run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
+
+      - name: .env 생성 (Limit 수치 CI 주입, 민감 값 테스트용 고정)
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+
+      - name: docker compose up (crypto-engine + db, --wait)
+        # 인수조건 1: 컨테이너 실제 Limit이 .env 수치와 일치해야 healthy 도달 가능
+        run: |
+          docker compose --env-file .env up -d --wait --wait-timeout 120 crypto-engine db
+
+      - name: Resource Limits 검증 (check-limits.sh)
+        # 인수조건 1: .env 수치 불일치 → exit 1
+        run: bash scripts/check-limits.sh .env
+
+  # ── compose-integration (신규 — Step 1-D 커버) ─────────────
+  compose-integration:
+    name: crypto-engine + db 동시 healthy 확인
+    runs-on: ubuntu-latest
+    needs: build-and-trivy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: pqc-db:secure 빌드
+        run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
+
+      - name: .env 생성
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+
+      - name: docker compose up (crypto-engine + db, --wait)
+        run: |
+          docker compose --env-file .env up -d --wait --wait-timeout 120 crypto-engine db
+
+      - name: crypto-engine + db healthy 확인
+        # 인수조건 3: 두 서비스 동시 healthy
+        run: |
+          CE_STATUS=$(docker inspect $(docker compose ps -q crypto-engine) \
+            --format '{{.State.Health.Status}}')
+          DB_STATUS=$(docker inspect $(docker compose ps -q db) \
+            --format '{{.State.Health.Status}}')
+          echo "crypto-engine: ${CE_STATUS}"
+          echo "db: ${DB_STATUS}"
+          [ "$CE_STATUS" = "healthy" ] || { echo "FAIL: crypto-engine not healthy"; exit 1; }
+          [ "$DB_STATUS" = "healthy" ] || { echo "FAIL: db not healthy"; exit 1; }
+          echo "PASS ✓ — 두 서비스 모두 healthy"
