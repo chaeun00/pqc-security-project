@@ -1025,3 +1025,16 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 3. trivy-action 리포팅 단계 VEX 경로 해석 확인
 
 **AC:** CI trivy 게이트 exit 0, .trivyignore 미사용, Makefile↔CI 경로 일치
+
+---
+## [2026-03-08] trivy CI 2단계 구조 → 단일 trivy-action 통합 계획
+
+**원인:** trivy-action이 config/env 잔존 → 게이트 step에서 VEX+skip-files 충돌
+**로컬 통과 이유:** VEX 잔존 없이 --skip-files만 적용
+
+**Scope:**
+1. CI 진단 step 추가 (which trivy, printenv|grep TRIVY, file /usr/local/bin/gosu)
+2. 보고+게이트 2단계 → 단일 trivy-action(exit-code:1) 통합
+3. security/trivy.yaml에 skip-files: [usr/local/bin/gosu] 추가
+
+**AC:** 진단 log 확인, C binary 교체 확인, CI trivy 잡 exit 0
