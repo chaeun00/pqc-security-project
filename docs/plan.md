@@ -1073,3 +1073,41 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 1. CI trivy 잡 exit 0 (CVE-2025-68121 suppressed)
 2. 로컬 make trivy-db / CI 동일 CLI 플래그 사용
 3. trivy.yaml에 버그 사유 주석 기록
+
+---
+## [2026-03-08] 보안 결함 수정 계획 (Step 1 범위)
+
+**수정 대상 (2개 — 최소 변경):**
+
+### 1. liboqs git clone 버전 고정 [고위험]
+- 파일: crypto-engine/Dockerfile:23
+- 변경: `--depth 1` → `--depth 1 --branch 0.15.0`
+- 근거: 빌드 재현성 + 공급망 위험 제거
+
+### 2. DSA message 입력 크기 제한 [중위험]
+- 파일: crypto-engine/app/schemas/dsa.py
+- 변경: message 필드에 Field(max_length=65536) 적용 (sign, verify 양쪽)
+- 근거: 무제한 페이로드 → 메모리 소진 DoS 차단
+
+**보류 항목 (Step 2 이후):**
+- [치명적] KEM secret_key/shared_secret 노출 → KEM API 전체 재설계 필요
+- [치명적] decryption oracle 패턴 → 아키텍처 변경
+- [고위험] 전 엔드포인트 인증 없음 → 인증 레이어 신규 구현
+
+**검증 방법:**
+- make build-secure-crypto → 빌드 성공 + liboqs 0.15.0 로그 확인
+- curl -X POST /dsa/sign -d '{"message":"A"*65537}' → 422 응답 확인
+- CI build-and-trivy 잡 통과
+
+**AC:**
+1. Dockerfile 빌드 로그에 liboqs 0.15.0 태그 클론 확인
+2. 65537자 message → 422 Unprocessable Entity
+3. CI build-and-trivy exit 0
+
+---
+## [2026-03-08] 보안 결함 수정 계획 (Step 1 범위) — rev.3
+
+### 3. test_edge.py DSA 크기 제한 케이스 추가
+- 파일: scripts/test_edge.py
+- 변경: "A"*65537 message → /dsa/sign 422 응답 검증 케이스 추가
+- CI: integration-test 잡이 이 파일을 실행하므로 자동 반영

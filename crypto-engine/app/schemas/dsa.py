@@ -1,8 +1,9 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class DSASignRequest(BaseModel):
-    message: str       # 서명할 평문
+    # max_length=65536: 무제한 페이로드 → 메모리 소진 DoS 차단
+    message: str = Field(max_length=65536)
 
     @field_validator("message")
     @classmethod
@@ -20,7 +21,8 @@ class DSASignResponse(BaseModel):
 
 
 class DSAVerifyRequest(BaseModel):
-    message: str       # 검증할 평문
+    # max_length=65536: sign과 동일 제한 적용
+    message: str = Field(max_length=65536)
     signature: str     # base64
     public_key: str    # base64
 

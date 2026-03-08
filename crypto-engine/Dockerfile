@@ -20,7 +20,7 @@ RUN apk add --no-cache \
 
 # liboqs C 라이브러리 빌드 및 설치
 # --prefix /usr: musl은 /usr/lib을 기본 탐색 → ldconfig 불필요
-RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs /liboqs \
+RUN git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs /liboqs \
     && cmake -S /liboqs -B /liboqs/build \
         -DBUILD_SHARED_LIBS=ON \
         -DOQS_BUILD_ONLY_LIB=ON \

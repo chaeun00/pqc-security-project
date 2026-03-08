@@ -76,3 +76,22 @@
 1. wait_healthy 타임아웃 후 컨테이너 정리 없음
 2. DB CID 빈값 시 오류 메시지 불명확
 3. 재검증(--no-build) 플래그 없음
+
+---
+## [2026-03-08] REVIEWER — 보안 결함 검토
+
+### 변경 요약
+현재 diff는 CRLF → LF 줄끝 정규화뿐 (기능 변경 없음).
+아래는 커밋된 코드 전체 기준 보안 검토.
+
+### 위험 요소
+- [치명적] /kem/keygen 응답에 secret_key 포함 — KEM 기밀성 훼손
+- [치명적] /kem/decrypt 요청에 secret_key 수신 — decryption oracle 패턴
+- [치명적] /kem/encrypt 응답에 shared_secret 노출
+- [고위험] 전 엔드포인트 인증 없음
+- [고위험] liboqs git clone 버전 미고정 (공급망 위험)
+- [중위험] DSA message 입력 크기 제한 없음
+
+### 결론
+내부 데모 서버 기준: 다음 단계 진행 가능.
+프로덕션 보안 서비스 기준: KEM API 재설계 필요.
