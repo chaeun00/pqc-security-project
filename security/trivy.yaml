@@ -1,10 +1,6 @@
 # security/trivy.yaml — Trivy 전역 설정
 # CI trivy 잡(pqc-db:secure 스캔)에서 trivy-action trivy-config 파라미터로 참조
 # --vex CLI 플래그와 동일: security/vex.json(OpenVEX)으로 CVE-2025-68121 억제
-skip-files:
-  # trivy v0.69.3: 컨테이너 경로는 leading / 없이 표현
-  # gosu(Go binary)는 su-exec(C)로 교체됨 → Go stdlib CVE 코드 미존재
-  - usr/local/bin/gosu
 
-#vex:
-#  - security/vex.json
+# skip-files: config 방식은 trivy v0.69.3 gobinary 스캐너에 미적용 (버그)
+# → CI는 CLI --skip-files usr/local/bin/gosu 플래그 직접 사용

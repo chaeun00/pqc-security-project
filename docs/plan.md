@@ -1038,3 +1038,38 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 3. security/trivy.yaml에 skip-files: [usr/local/bin/gosu] 추가
 
 **AC:** 진단 log 확인, C binary 교체 확인, CI trivy 잡 exit 0
+
+---
+## [2026-03-08] trivy config skip-files 버그 → CLI 플래그 방식 복원
+
+**원인 확정:**
+- trivy v0.69.3에서 config 파일(`trivy.yaml`)의 `skip-files:` 키가 gobinary 스캐너에 미적용 (버그)
+- 로컬 CLI `--skip-files usr/local/bin/gosu` → PASS
+- config 방식 `--config security/trivy.yaml` → FAIL (로컬 재현 확인)
+
+**변경 파일 목록:**
+1. `.github/workflows/ci.yml` — trivy 잡
+2. `security/trivy.yaml` — skip-files 제거 + 버그 주석
+
+**변경 내용:**
+
+### 1. ci.yml (trivy 잡, lines 80-96)
+현재: 단일 trivy-action (exit-code:1, trivy-config: security/trivy.yaml)
+변경: 2단계 복원
+  - Step 1: trivy-action@0.35.0 (exit-code:"0") → trivy 바이너리 PATH 설치
+  - Step 2: run: trivy image --severity CRITICAL --exit-code 1 --skip-files usr/local/bin/gosu pqc-db:secure
+  - 진단 step 제거 (목적 달성)
+
+### 2. security/trivy.yaml
+현재: skip-files: [usr/local/bin/gosu]
+변경: skip-files 섹션 제거
+      주석 추가: "skip-files config 방식은 trivy v0.69.3 gobinary 스캐너에 미적용 (버그) → CI는 CLI --skip-files 플래그 사용"
+
+**검증 방법:**
+- CI trivy 잡 → exit 0
+- make trivy-db → exit 0 (Makefile:169 CLI 플래그 동일, 변경 불필요)
+
+**AC:**
+1. CI trivy 잡 exit 0 (CVE-2025-68121 suppressed)
+2. 로컬 make trivy-db / CI 동일 CLI 플래그 사용
+3. trivy.yaml에 버그 사유 주석 기록

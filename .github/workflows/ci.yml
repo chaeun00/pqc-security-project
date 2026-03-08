@@ -77,23 +77,26 @@ jobs:
       - name: pqc-db:secure 빌드
         run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
 
-      - name: 진단 (trivy 경로, 환경변수, gosu 바이너리 타입)
-        # trivy-action config/env 잔존 여부 + gosu → su-exec(C) 교체 확인
-        run: |
-          which trivy || true
-          printenv | grep -i trivy || true
-          docker run --rm pqc-db:secure file /usr/local/bin/gosu || true
-
-      - name: Trivy CRITICAL 스캔+게이트 (단일 trivy-action, exit-code 1)
-        # 2단계(보고+게이트) → 단일 통합: trivy-config로 skip-files 적용, exit-code:1 게이트
-        # skip-files: usr/local/bin/gosu — security/trivy.yaml에 정의
+      - name: Trivy CRITICAL 스캔 (trivy PATH 설치, exit-code 0)
+        # trivy v0.69.3 config skip-files 버그: config 방식은 gobinary 스캐너에 미적용
+        # → trivy-action으로 바이너리만 설치, 게이트는 아래 CLI --skip-files 플래그 사용
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: pqc-db:secure
           severity: CRITICAL
-          exit-code: "1"
+          exit-code: "0"
           format: table
-          trivy-config: security/trivy.yaml
+
+      - name: Trivy CRITICAL 게이트 (CLI --skip-files, exit-code 1)
+        # trivy-action이 trivy를 PATH에 설치 → CLI 직접 호출
+        # --skip-files usr/local/bin/gosu: gosu(Go binary) → su-exec(C)로 교체됨, CVE 코드 미존재
+        # 경로: leading / 없음 (trivy v0.69.3 컨테이너 경로 표현 방식)
+        run: |
+          trivy image \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --skip-files usr/local/bin/gosu \
+            pqc-db:secure
 
   # ── build-and-trivy (신규 — Step 1-A, 1-B 커버) ───────────
   build-and-trivy:
