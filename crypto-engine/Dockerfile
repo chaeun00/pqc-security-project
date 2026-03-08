@@ -45,7 +45,7 @@ RUN /venv/bin/python -c "import oqs; print('oqs OK:', oqs.get_enabled_kem_mechan
 FROM python:3.12-alpine AS runtime
 
 # libssl3: liboqs.so 런타임 의존 (python:3.12-alpine 기본 포함이나 명시)
-RUN apk add --no-cache libssl3
+RUN apk add --no-cache libssl3 'zlib>=1.3.2-r0'
 
 # nonroot 유저 생성 (Alpine addgroup/adduser 방식)
 RUN addgroup -g 65532 nonroot && \
@@ -67,4 +67,6 @@ USER nonroot
 
 EXPOSE 8000
 
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:8000", "app.main:app"]
+# --preload: master에서 algorithm_factory.py 1회 로드 → fork()로 worker 상속
+# worker별 독립 keypair 생성 방지 → DSA public_key 항상 일치
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "--preload", "-b", "0.0.0.0:8000", "app.main:app"]

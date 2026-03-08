@@ -153,9 +153,21 @@ build-secure-db: ## [Step 1-C] db: Cosign WARN + build(multi-stage su-exec) + Tr
 		|| echo "==> [build-secure-db 1/3] WARN — postgres:17-alpine 미서명 (Docker Hub 기본, 허용)"
 	@echo "==> [build-secure-db 2/3] docker build: db (Multi-stage su-exec COPY, pqc-db:secure)"
 	@DOCKER_CONTENT_TRUST=0 docker compose build db
-	@echo "==> [build-secure-db 3/3] Trivy+VEX: pqc-db:secure Critical 취약점 스캔 (exit-code 1)"
-	@trivy image --severity CRITICAL --exit-code 1 --vex security/vex.json pqc-db:secure
+	@echo "==> [build-secure-db 3/3] Trivy: pqc-db:secure Critical 취약점 스캔 (exit-code 1)"
+	# --skip-files: gosu 경로는 su-exec(C)로 교체됨 → Go stdlib CVE 코드 미존재, VEX product 매칭 대신 파일 제외
+	@trivy image --severity CRITICAL --exit-code 1 --skip-files usr/local/bin/gosu pqc-db:secure
 	@echo "==> [build-secure-db] 완료 ✓"
+
+# ──────────────────────────────────────────────────────────
+# trivy-db — CI 게이트와 동일한 로컬 스캔 (pqc-db:secure 빌드 필요)
+# ──────────────────────────────────────────────────────────
+trivy-db: ## [Step 1-C] pqc-db:secure Trivy CRITICAL 스캔 (CI 게이트 동일, --skip-files)
+	# --skip-files 사용 근거:
+	#   OpenVEX product ID는 레지스트리 digest 기준 → 로컬 빌드 이미지에서 pkg:oci 매칭 불가
+	#   /usr/local/bin/gosu: Multi-stage COPY로 su-exec(C) 바이너리로 교체, Go stdlib CVE 코드 미존재
+	@which trivy > /dev/null 2>&1 || { echo "Error: trivy 미설치."; exit 1; }
+	@trivy image --severity CRITICAL --exit-code 1 --skip-files usr/local/bin/gosu pqc-db:secure
+	@echo "==> trivy-db 완료: CRITICAL 0건 ✓"
 
 # ──────────────────────────────────────────────────────────
 # build-secure-crypto — Step 1-B 보안 파이프라인 (기존 build-secure 로직)

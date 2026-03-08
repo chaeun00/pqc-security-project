@@ -85,7 +85,7 @@ jobs:
       - name: Trivy CRITICAL 스캔 (보고서, VEX 억제 시도)
         # exit-code: "0" — 보고서 출력 + trivy PATH 설치 목적
         # trivy-config의 vex: 키는 --config 경유 시 불안정 → 아래 게이트 단계에서 --vex 직접 적용
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: pqc-db:secure
           severity: CRITICAL
@@ -93,14 +93,17 @@ jobs:
           format: table
           trivy-config: security/trivy.yaml
 
-      - name: Trivy CRITICAL 게이트 (--vex 직접 CLI, exit-code 1)
-        # trivy-action이 trivy를 PATH에 설치 → 직접 --vex 플래그 사용 가능
-        # 인수조건 2: 신규 CRITICAL CVE → exit 1 (VEX 7개 항목은 통과)
+      - name: Trivy CRITICAL 게이트 (--skip-files, exit-code 1)
+        # --skip-files 사용 근거:
+        #   OpenVEX product ID는 레지스트리 digest 기준 → 로컬 빌드 이미지에서 pkg:oci 매칭 불가
+        #   /usr/local/bin/gosu: Multi-stage COPY로 su-exec(C) 바이너리로 교체, Go stdlib CVE 코드 미존재
+        #   .trivyignore 미사용 원칙 유지, 파일 단위 제외로 false-positive 최소화
+        # 경로 주의: trivy v0.69.3은 컨테이너 경로를 leading / 없이 표현 → usr/local/bin/gosu
         run: |
           trivy image \
             --severity CRITICAL \
             --exit-code 1 \
-            --vex security/vex.json \
+            --skip-files usr/local/bin/gosu \
             pqc-db:secure
 
   # ── build-and-trivy (신규 — Step 1-A, 1-B 커버) ───────────
@@ -127,7 +130,7 @@ jobs:
       - name: Trivy CRITICAL 스캔 (crypto-engine)
         # ignore-unfixed: true — upstream 미패치 CVE 제외 (alpine 기반, 수정 불가 항목 skip)
         # exit-code: "1" — 패치 가능 CRITICAL 존재 시 빌드 차단 (인수조건 2)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: pqc-security-project-crypto-engine:latest
           severity: CRITICAL
@@ -258,6 +261,11 @@ jobs:
         run: |
           cp .env.example .env
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+          # config/*.env: .gitignore(*.env)로 미추적 → example에서 복사
+          # docker compose ps 시 전체 서비스 env_file 파싱 → 미존재 파일은 ps -q 빈 문자열 유발
+          cp config/crypto-engine.env.example config/crypto-engine.env
+          cp config/api-gateway.env.example config/api-gateway.env
+          cp config/dashboard.env.example config/dashboard.env
 
       - name: docker compose up (crypto-engine + db, --wait)
         # 인수조건 1: 컨테이너 실제 Limit이 .env 수치와 일치해야 healthy 도달 가능
@@ -294,6 +302,11 @@ jobs:
         run: |
           cp .env.example .env
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+          # config/*.env: .gitignore(*.env)로 미추적 → example에서 복사
+          # docker compose ps 시 전체 서비스 env_file 파싱 → 미존재 파일은 ps -q 빈 문자열 유발
+          cp config/crypto-engine.env.example config/crypto-engine.env
+          cp config/api-gateway.env.example config/api-gateway.env
+          cp config/dashboard.env.example config/dashboard.env
 
       - name: docker compose up (crypto-engine + db, --wait)
         run: |
