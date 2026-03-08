@@ -1111,3 +1111,87 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 - 파일: scripts/test_edge.py
 - 변경: "A"*65537 message → /dsa/sign 422 응답 검증 케이스 추가
 - CI: integration-test 잡이 이 파일을 실행하므로 자동 반영
+---
+## Phase 2 — API Gateway Spring Boot 세부 계획 (Week 3–4, 2026-03-09 ~ 2026-03-20)
+
+### Week 3 — Spring Boot 기반 + JWT 인증 레이어 (Day 1–5)
+
+**Day 1 (3/9): api-gateway 프로젝트 셋업**
+- api-gateway/ Spring Boot 3.x + Gradle 모듈 생성
+- Docker Compose 연동 (pqc-network 내부 통신)
+- GET /api/health 헬스체크 + CI 빌드 잡 추가
+- [관건 5] React + Spring Boot + PostgreSQL 기술 스택 정렬 확인
+
+**Day 2 (3/10): Feign Client 구성**
+- CryptoEngineClient: /dsa/sign, /dsa/verify Feign 인터페이스
+- Resilience4j CircuitBreaker + Fallback 설정
+- Stateless 원칙: 세션 없음, 요청별 독립 호출
+- [관건 1] Spring Boot → Python 엔진 호출 Latency 감소 전략 적용 (비동기 + Fallback)
+
+**Day 3 (3/11): ML-DSA JWT 발급**
+- POST /api/auth/login → JWT 발급
+- JWT payload: userId, algorithm, exp
+- Feign → crypto-engine /dsa/sign → 서명된 JWT 응답
+- [관건 3] NIST 표준 ML-DSA 서명을 JWT 발급 흐름에 적용
+
+**Day 4 (3/12): JWT 검증 필터 + 인증 레이어 [보안 이슈 해결]**
+- Spring Security JwtAuthFilter: Bearer 토큰 파싱 → Feign → /dsa/verify
+- 미인증 요청 → 403 Forbidden
+- [관건 6] 하이브리드 게이트웨이 도입 시작 — 기존 알고리즘과 PQC 공존 구간 설계
+- ★ 보류 항목 해결: "[고위험] 전 엔드포인트 인증 없음"
+- ★ 인수조건 2 달성: 미인증 403
+
+**Day 5 (3/13): Week 3 통합 + CI**
+- make test-dct 포함 통합 확인
+- CI: api-gateway Trivy 스캔 잡 추가
+- AC: JWT 발급·검증 왕복 + 미인증 403 확인
+
+---
+
+### Week 4 — KEM 재설계 + 게이트웨이 완성 (Day 6–10)
+
+**Day 6 (3/16): KEM API 재설계 [보안 이슈 해결]**
+- ★ 보류 항목 해결: "[치명적] secret_key 외부 노출"
+- [관건 3] 암호 민첩성 — KEM 키 관리를 서버사이드로 재설계하여 알고리즘 전환 용이성 확보
+- 현재: /kem/keygen → secret_key 클라이언트 반환 (기밀성 훼손)
+- 변경: 서버사이드 키 보관 (key_metadata 테이블)
+  - POST /api/kem/init → key_id 반환 (secret_key 외부 비노출)
+  - POST /api/kem/encrypt → key_id + plaintext → ciphertext
+
+**Day 7 (3/17): decryption oracle 패턴 수정 + /api/encrypt 전 구간 [보안 이슈 해결]**
+- [관건 2] 고쓰기 워크로드(CBOM 자동 로깅) 발생 시점 — VACUUM 정책 실부하 검증
+- [관건 7] CBOM 기반 PQC 전환 우선순위 데이터 수집 시작
+- ★ 보류 항목 해결: "[치명적] decryption oracle 패턴"
+- 변경: POST /api/kem/decrypt → key_id + ciphertext (secret_key 수신 제거)
+- POST /api/encrypt 전 구간 연결
+- CBOM 자동 로깅: 암호화 이벤트 → cbom_assets INSERT
+- ★ 인수조건 1 달성: POST /api/encrypt 전 구간 정상 + CBOM 기록
+
+**Day 8 (3/18): Algorithm Agility 인터페이스**
+- [관건 3] 암호 민첩성 완성 — 환경변수 교체만으로 KEM/DSA 알고리즘 전환
+- [관건 4] 새 표준 등장 시 신속 교체 가능한 구조 완성
+- AlgorithmStrategy 인터페이스: KEM/DSA 알고리즘 추상화
+- 환경변수(KEM_ALGORITHM_ID, DSA_ALGORITHM_ID) 교체 → 재빌드 없이 전환
+- CBOM 이력: 알고리즘 전환 이벤트 cbom_assets 반영
+- ★ 인수조건 3 달성: 환경변수 교체만으로 전환 + CBOM 이력
+
+**Day 9 (3/19): SNDL High-Risk 우선순위 라우팅**
+- [관건 6] 하이브리드 게이트웨이 완성 — PQC + 기존 알고리즘 혼재 + Fallback
+- [관건 7] CBOM High-Risk 자산 식별 → PQC 우선 라우팅 (SNDL 공격 대응)
+- RiskClassifier: 요청 민감도 분류 (HIGH/MEDIUM/LOW)
+- HIGH → ML-KEM-1024, MEDIUM → ML-KEM-768, LOW → ML-KEM-512
+- 라우팅 필터 구현 + CBOM risk_level 필드 연동
+
+**Day 10 (3/20): Phase 2 완성 + CI 전체 검증**
+- [관건 4] 표준 변경 시 교체 용이성 최종 검증
+- [관건 8] Phase 3 진입을 위한 React 상태관리 도구(TanStack Query + Zustand) 선택 확정
+- 전체 인수조건 검증
+- CI: Phase 2 잡 완성 (build + trivy + integration)
+- Phase 3 진입 준비
+
+---
+
+### Phase 2 인수조건 (plan.md 기준)
+1. POST /api/encrypt 전 구간 정상 동작 + CBOM 자동 기록 ← Day 7
+2. ML-DSA JWT 정상 발급·검증 + 미인증 403 + Trivy Critical 0건 ← Day 4–5
+3. 환경변수 교체만으로 전환 가능 + 알고리즘 전환 시 CBOM 이력 반영 ← Day 8
