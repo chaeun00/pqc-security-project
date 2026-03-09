@@ -1323,3 +1323,30 @@ cd api-gateway && ./gradlew test --no-daemon
 1. 로컬 Trivy CRITICAL 스캔 exit 0
 2. CI api-gateway-build Trivy 스캔 CRITICAL 0건
 3. ./gradlew dependencies | grep tomcat → 10.1.36 이상
+
+---
+### Week 3 Day 2 (3/10) 세부 계획 — Feign Client 구성
+
+**목표:** Spring Cloud OpenFeign으로 CryptoEngineClient(/dsa/sign, /dsa/verify) 구성 + Resilience4j CircuitBreaker Fallback 적용
+
+**Step 1 — 의존성 추가 (build.gradle)**
+- spring-cloud-starter-openfeign
+- spring-cloud-starter-circuitbreaker-resilience4j
+- resilience4j-spring-boot3
+
+**Step 2 — CryptoEngineClient 인터페이스 + DTO + Fallback 클래스**
+- @FeignClient(name="crypto-engine", url="${crypto.engine.url}")
+- sign(SignRequest) → POST /dsa/sign
+- verify(VerifyRequest) → POST /dsa/verify
+- Fallback: CircuitBreaker Open → 503 예외 전파
+
+**Step 3 — application.yml Resilience4j + Feign 타임아웃 설정**
+- slidingWindowSize: 10 / failureRateThreshold: 50% / waitDuration: 10s
+- connectTimeout: 2000ms / readTimeout: 5000ms
+- CRYPTO_ENGINE_URL 환경변수 외부 주입
+- **다양한 방법을 시도해보며 최적을 찾고, 포트폴리오에 기입해라**
+
+**인수조건**
+1. sign() 정상 호출 → crypto-engine 200 응답 전달
+2. crypto-engine 중단 시 → CircuitBreaker Fallback → 503 반환
+3. CRYPTO_ENGINE_URL 변경만으로 엔드포인트 교체 가능
