@@ -95,3 +95,68 @@
 ### 결론
 내부 데모 서버 기준: 다음 단계 진행 가능.
 프로덕션 보안 서비스 기준: KEM API 재설계 필요.
+
+---
+## Week 3 Day 1 리뷰 (2026-03-09)
+### api-gateway 프로젝트 셋업
+
+**변경 요약:** Dockerfile Maven→Gradle 교체, Spring Boot 앱 초기 셋업, docker-compose healthcheck 추가, CI api-gateway-build 잡 추가
+
+**위험 요소:**
+- [HIGH] Spring Security 추가 시 /actuator/health permitAll() 누락 시 healthcheck 실패
+- [MEDIUM] gradle wrapper 미사용 — 버전 일관성 로컬 미보장
+- [MEDIUM] COPY *.jar 와일드카드 — 향후 멀티jar 빌드 시 실패 가능
+- [LOW] curl 설치로 이미지 공격 면적 증가
+- [LOW] Actuator 포트 미분리
+
+**테스트 공백:** HealthController 단위 테스트 없음, CI -x test 스킵
+
+**Day 2 진입:** 가능. /actuator/health permitAll() 계획 및 Actuator 포트 분리 결정 필요.
+
+---
+## Week 3 Day 1 리뷰 수정판 (2026-03-09)
+
+### [HIGH] Day 4 Spring Security 사전 계획 — permitAll + 관리 포트 분리
+
+**진입 전 필수 조치 (Day 4 작업 시작 전):**
+1. `SecurityConfig.java` 작성 시 `/actuator/health` 및 `/api/health` 를 `permitAll()` 로 명시 — 미설정 시 docker-compose HEALTHCHECK 403 → restart loop 재현
+2. Actuator 관리 포트 `8081` 분리 (`management.server.port=8081`) — 프로덕션 게이트웨이에서 내부 포트 외부 노출 차단
+   - docker-compose api-gateway healthcheck URL도 `8081`로 변경 필요
+3. CSRF 비활성화 (`csrf.disable()`) — Stateless REST API 원칙 (세션 없음)
+
+### [관건 5] api-gateway ↔ db ↔ dashboard 기술 스택 정렬 확인
+
+| 서비스 | 스택 | 통신 |
+|--------|------|------|
+| api-gateway | Spring Boot 3.2 / Java 21 / Gradle 8.8 | REST (pqc-internal) |
+| crypto-engine | FastAPI / Python / liboqs | REST (pqc-internal) |
+| db | PostgreSQL 17 | JDBC (pqc-internal) |
+| dashboard | React (TBD: Vite + TanStack Query + Zustand) | REST (pqc-public → api-gateway:8080) |
+
+**정렬 확인 결과:** 네트워크 분리(pqc-internal / pqc-public) 일치. dashboard↔api-gateway 간 CORS 설정 Day 3 또는 Day 5에 추가 필요.
+
+---
+## Week 3 Day 1 리뷰 (2026-03-09)
+### api-gateway 프로젝트 셋업
+
+**변경 요약:**
+Dockerfile Maven→Gradle 멀티스테이지 교체, Spring Boot 앱 초기 셋업 (HealthController, application.yml),
+docker-compose healthcheck 추가, CI api-gateway-build 잡 추가.
+
+**위험 요소:**
+- [HIGH] Spring Security 추가 시 /actuator/health permitAll() 누락 → docker-compose healthcheck 즉시 실패
+- [MEDIUM] gradle wrapper 미사용 — 로컬 환경 버전 일관성 미보장
+- [MEDIUM] COPY *.jar 와일드카드 — 향후 멀티jar 빌드 시 실패 가능
+- [LOW] curl 설치로 이미지 공격 면적 증가 (Trivy HIGH 미차단)
+- [LOW] Actuator 포트 미분리 (8080 공용) — Day 2 Security 설계에 영향
+
+**테스트 공백:**
+- CI -x test 스킵 유지 — 첫 테스트 작성 후 해제 필요
+- HealthController 단위 테스트 없음 (testImplementation 의존성은 추가됨)
+
+**해결된 항목:**
+- testImplementation 'spring-boot-starter-test' 추가 완료
+
+**Day 2 전제조건:**
+- Spring Security Config에서 /actuator/health permitAll() 필수
+- Actuator 포트 분리 여부 결정 필요

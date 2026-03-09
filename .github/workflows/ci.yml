@@ -316,3 +316,41 @@ jobs:
           [ "$CE_STATUS" = "healthy" ] || { echo "FAIL: crypto-engine not healthy"; exit 1; }
           [ "$DB_STATUS" = "healthy" ] || { echo "FAIL: db not healthy"; exit 1; }
           echo "PASS ✓ — 두 서비스 모두 healthy"
+
+  # ── api-gateway-build (Day 1 — 기존 잡과 독립 병렬) ─────
+  api-gateway-build:
+    name: api-gateway 빌드 + Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 21 설치
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Gradle wrapper 설치 및 캐시
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 단위 테스트 (./gradlew test)
+        working-directory: api-gateway
+        run: ./gradlew test --no-daemon
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: api-gateway Docker 빌드
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api-gateway
+          load: true
+          tags: api-gateway:ci
+
+      - name: Trivy CRITICAL 스캔
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: api-gateway:ci
+          severity: CRITICAL
+          exit-code: '1'
+          format: table

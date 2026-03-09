@@ -1140,12 +1140,20 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 - [관건 6] 하이브리드 게이트웨이 도입 시작 — 기존 알고리즘과 PQC 공존 구간 설계
 - ★ 보류 항목 해결: "[고위험] 전 엔드포인트 인증 없음"
 - ★ 인수조건 2 달성: 미인증 403
+- 진입 체크리스트 (필수)
+  1. SecurityConfig.java: /api/health + /actuator/health → permitAll()
+  2. SecurityConfig.java: csrf().disable() (Stateless REST)
+  3. SecurityConfig.java: 나머지 경로 → authenticated()
+  ※ 미이행 시: docker-compose healthcheck 403 → restart loop → 전체 스택 기동 불가
 
 **Day 5 (3/13): Week 3 통합 + CI**
 - make test-dct 포함 통합 확인
 - CI: api-gateway Trivy 스캔 잡 추가
 - AC: JWT 발급·검증 왕복 + 미인증 403 확인
-
+- 포트 분리 계획
+  - application.yml: management.server.port: 8081
+  - docker-compose.yml healthcheck: http://localhost:8081/actuator/health
+  - 8081 포트: pqc-internal 전용 (외부 미노출)
 ---
 
 ### Week 4 — KEM 재설계 + 게이트웨이 완성 (Day 6–10)
@@ -1195,3 +1203,123 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 1. POST /api/encrypt 전 구간 정상 동작 + CBOM 자동 기록 ← Day 7
 2. ML-DSA JWT 정상 발급·검증 + 미인증 403 + Trivy Critical 0건 ← Day 4–5
 3. 환경변수 교체만으로 전환 가능 + 알고리즘 전환 시 CBOM 이력 반영 ← Day 8
+
+---
+## [2026-03-09] Day 1 세부 계획 확정판 — api-gateway 프로젝트 셋업
+
+### 아키텍처 결정 (확정)
+- 웹 스택: Spring MVC (spring-boot-starter-web)
+- 모듈 구조: 독립 단일 모듈 (api-gateway/settings.gradle 독립 선언)
+- CI 구조: 별도 잡 api-gateway-build (기존 build-and-trivy 잡과 격리 병렬)
+
+### 범위
+- Step 1: api-gateway/ 독립 단일 모듈 골격 (settings.gradle, build.gradle, gradlew, application.yml)
+- Step 2: HealthController — GET /api/health → {"status":"UP"}, Actuator /actuator/health (Docker 내부용)
+- Step 3: Dockerfile 멀티스테이지 (JDK21 빌드 → JRE21 실행) + docker-compose.yml api-gateway 서비스 (pqc-network)
+- Step 4: .github/workflows/ci.yml api-gateway-build 잡 추가 (gradlew build → Docker 빌드 → Trivy)
+
+### 인수조건
+1. curl localhost:8080/api/health → 200 {"status":"UP"}
+2. curl localhost:8080/actuator/health → 200 {"status":"UP"} (컨테이너 HEALTHCHECK 통과)
+3. GitHub Actions api-gateway-build 잡 독립 exit 0 + Trivy 통과
+
+---
+## [2026-03-09] Day 1 장애 수정 계획 v2 — Connection reset 원인 확정
+
+### 원인
+- Spring Boot 3.x Gradle bootJar + jar 동시 실행 → build/libs/에 fat JAR + plain JAR 2개 생성
+- Dockerfile `COPY *.jar app.jar` → plain JAR 복사 시 java -jar 크래시
+- restart: unless-stopped 재시작 루프 → Docker proxy가 8080 점유 → RST 반환
+
+### 수정 범위
+- Step 1: docker compose ps / logs --tail=20 으로 재시작 루프 확정
+- Step 2: build.gradle에 jar.enabled = false 추가 (plain JAR 생성 차단)
+- Step 3: Dockerfile HEALTHCHECK wget → apk add curl + curl -f 교체
+- Step 4: docker build → docker run 격리 검증 후 docker compose up 전체 검증
+
+### 인수조건
+1. docker compose ps api-gateway → STATUS healthy
+2. docker run 격리 → curl localhost:8080/api/health → 200 {"status":"UP"}
+3. docker compose logs --tail=20 → Started ApiGatewayApplication 확인
+
+---
+## [2026-03-09] Day 1 리뷰 수정 계획 — review.md Week 3 Day 1 반영
+
+### 질문
+1. CI api-gateway-build 잡의 호스트 Gradle 빌드(L338–340)가 Docker 빌드와 중복인 것을 인지하고 있는가? — 호스트 빌드를 gradle test(단위 테스트 실행)로 목적 전환할지, 제거할지 결정 필요. => gradle test(단위 테스트 실행)로 목적 전환
+2. config/api-gateway.env.example에 현재 어떤 키가 정의되어 있는가? => CRYPTO_ENGINE_URL, SPRING_PROFILES_ACTIVE=dev
+
+### 타당성 판정 요약
+- [HIGH] Spring Security permitAll() 누락 → 타당, Day 4 진입 전 사전 계획 수립
+- [MEDIUM] gradle wrapper 미사용 → 타당, 즉시 수정 (로컬/CI/Docker 일관성)
+- [MEDIUM] COPY *.jar → 이미 해결됨 (jar.enabled=false), CI 중복 빌드 구조 비효율 잔존
+- [LOW] curl 공격 면적 → 수용 (HEALTHCHECK 필수, 트레이드오프 문서화)
+- [LOW] Actuator 포트 미분리 → Day 5로 이월
+- 테스트 공백 → 즉시 수정 (HealthController 단위 테스트 추가)
+
+### 수정 범위
+- Step 1: gradle wrapper 추가 (gradlew + gradle/wrapper/) → Dockerfile + CI 명령어 ./gradlew로 통일
+- Step 2: CI api-gateway-build 호스트 Gradle 스텝 → ./gradlew test로 목적 전환
+- Step 3: HealthControllerTest.java 추가 + build.gradle spring-boot-starter-test 의존성
+- Step 4: Day 4 Spring Security 진입 전 사전 계획 (permitAll + 관리 포트 8081 분리)
+- Step 5: [관건 5] api-gateway↔db↔dashboard 기술 스택 정렬 확인 (누락 항목 보완)
+
+### 인수조건
+1. cd api-gateway && ./gradlew test → HealthControllerTest 통과
+2. CI api-gateway-build: ./gradlew test → docker build → Trivy → 모두 exit 0
+3. docker compose up api-gateway --no-deps → curl localhost:8080/api/health → 200
+
+---
+## [2026-03-09] gradle-wrapper.jar git 추가 + 보안 완화 계획
+
+### 문제
+- .gitignore의 `*.jar` 규칙이 gradle-wrapper.jar 차단
+- gradle-wrapper.properties에 distributionSha256Sum 없음 → 다운로드 무결성 미검증
+
+### 수정 범위
+- Step 1: .gitignore에 예외 추가 (`!api-gateway/gradle/wrapper/gradle-wrapper.jar`)
+- Step 2: gradle-wrapper.properties에 SHA256 추가
+  distributionSha256Sum=f8b4f4772d302c8ff580bc40d0f56e715de69b163546944f787a61f5f4fa0c16
+- Step 3: git add + chmod +x
+
+### 실행 명령어
+# Step 1
+echo '!api-gateway/gradle/wrapper/gradle-wrapper.jar' >> .gitignore
+
+# Step 2
+sed -i '/^zipStorePath/a distributionSha256Sum=f8b4f4772d302c8ff580bc40d0f56e715de69b163546944f787a61f5f4fa0c16' \
+  api-gateway/gradle/wrapper/gradle-wrapper.properties
+
+# Step 3
+git add .gitignore \
+        api-gateway/gradle/wrapper/gradle-wrapper.jar \
+        api-gateway/gradle/wrapper/gradle-wrapper.properties \
+        api-gateway/gradlew
+git update-index --chmod=+x api-gateway/gradlew
+
+### 검증
+cd api-gateway && ./gradlew test --no-daemon
+
+### 인수조건
+1. git ls-files api-gateway/gradle/wrapper/gradle-wrapper.jar → 추적됨
+2. git ls-files -s api-gateway/gradlew → 100755
+3. ./gradlew test --no-daemon → BUILD SUCCESSFUL
+
+---
+## [2026-03-09] Day 1 CVE 수정 계획 — Trivy CRITICAL 차단 해제
+
+### CVE 목록
+- CVE-2025-24813: app.jar 내 Tomcat RCE (Spring Boot 3.2.5 내장) - tomcat: Potential RCE and/or information disclosure and/or
+- CVE-2026-22184: Alpine 3.23.3 패키지 취약점 - zlib: zlib: Arbitrary code execution via buffer overflow in
+
+### 수정 범위
+- Step 1: build.gradle Spring Boot 3.2.5 → 3.4.4 (Tomcat 10.1.36 포함)
+          dependency-management 1.1.5 → 1.1.7
+- Step 2: Dockerfile Stage 2 RUN apk add → apk upgrade --no-cache && apk add --no-cache curl
+- Step 3: 로컬 trivy image --severity CRITICAL --exit-code 1 api-gateway-test 검증
+- Step 4: CVE-2026-22184 업스트림 미패치 시 .trivyignore 또는 ignore-unfixed:true 결정
+
+### 인수조건
+1. 로컬 Trivy CRITICAL 스캔 exit 0
+2. CI api-gateway-build Trivy 스캔 CRITICAL 0건
+3. ./gradlew dependencies | grep tomcat → 10.1.36 이상

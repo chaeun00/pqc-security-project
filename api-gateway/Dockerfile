@@ -1,31 +1,33 @@
 # ==============================================================
-# api-gateway — Multi-stage Dockerfile (Phase 2에서 완성)
-# Stage 1 (builder): Maven 빌드
-# Stage 2 (runtime): JRE 런타임 + 비루트 실행
-# rev.5: Rootless 전략 = Dockerfile USER nonroot
+# api-gateway — Multi-stage Dockerfile (Day 1)
+# Stage 1 (builder): Gradle 빌드 (JDK21)
+# Stage 2 (runtime): JRE21 + 비루트 실행
 # ==============================================================
 
 # ── Stage 1: builder ──────────────────────────────────────
-# TODO(Phase 2): pom.xml 작성 후 완성
-FROM maven:3.9-eclipse-temurin-21 AS builder
-# COPY pom.xml .
-# COPY src/ src/
-# RUN mvn package -DskipTests --no-transfer-progress
+FROM gradle:8.8-jdk21-alpine AS builder
+WORKDIR /app
+COPY build.gradle settings.gradle ./
+COPY gradle ./gradle
+COPY gradlew ./
+COPY src ./src
+RUN ./gradlew build -x test --no-daemon
 
 # ── Stage 2: runtime ──────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine AS runtime
 
-# 비루트 유저 생성 (rev.5 — USER nonroot 전략)
-RUN adduser -D -u 10001 nonroot
-
-# TODO(Phase 2): COPY --from=builder
-# COPY --from=builder /target/*.jar app.jar
+# apk upgrade: CVE-2026-22184(zlib) 등 Alpine OS 패키지 CRITICAL 패치
+# curl: HEALTHCHECK용 (BusyBox wget은 -f 플래그 미지원 → 크래시 감지 불가)
+RUN apk upgrade --no-cache && \
+    apk add --no-cache curl && \
+    adduser -D -u 10001 nonroot
 
 WORKDIR /app
+
+COPY --from=builder /app/build/libs/*.jar app.jar
 
 USER nonroot
 
 EXPOSE 8080
 
-# TODO(Phase 2): ENTRYPOINT 확정
-# ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
