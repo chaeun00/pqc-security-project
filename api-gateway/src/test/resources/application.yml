@@ -1,0 +1,4 @@
+# 테스트 기본 프로퍼티 — CryptoEngineProperties 검증 통과용
+crypto:
+  engine:
+    url: https://test-crypto-engine:8000

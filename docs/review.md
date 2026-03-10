@@ -160,3 +160,52 @@ docker-compose healthcheck 추가, CI api-gateway-build 잡 추가.
 **Day 2 전제조건:**
 - Spring Security Config에서 /actuator/health permitAll() 필수
 - Actuator 포트 분리 여부 결정 필요
+
+---
+## Review: Week 3 Day 2 — Feign Client 구성 (2026-03-10)
+
+### 변경 요약
+- build.gradle: openfeign, circuitbreaker-resilience4j, resilience4j-spring-boot3 의존성 추가
+- application.yml: crypto-engine URL, Feign timeout, Resilience4j CB 설정, metrics 노출 추가
+- ApiGatewayApplication.java: @EnableFeignClients 추가
+- docs/plan.md: CB 인스턴스명 불일치 버그픽스 계획 추가
+
+### 위험 요소 및 엣지 케이스
+
+**[HIGH] HTTP 기본값 — 평문 통신**
+`crypto.engine.url: ${CRYPTO_ENGINE_URL:http://crypto-engine:8000}`
+PQC 암호화 서비스(DSA sign/verify)가 평문 전송. CRYPTO_ENGINE_URL 미설정 시 서명 데이터가 HTTP로 노출됨.
+
+**[HIGH] /actuator/metrics 무인증 노출**
+`include: health,metrics` 변경으로 feign latency, CB 상태, JVM 메모리 외부 노출. 공격자의 내부 구조 파악 및 timing 분석 경로.
+
+**[HIGH] api-gateway → crypto-engine 서비스 간 인증 없음**
+mTLS, API Key, Bearer Token 등 서비스 간 인증 메커니즘 부재. crypto-engine URL 직접 접근 가능.
+
+**[MEDIUM] SSRF 잠재 위험**
+CRYPTO_ENGINE_URL 환경변수가 오염될 경우 Feign Client가 임의 내부 엔드포인트 호출 가능.
+
+**[MEDIUM] CB 인스턴스명 불일치**
+`configs.default` 설정과 @CircuitBreaker 인스턴스명 미매칭 시 CB 미동작 → 스레드 풀 고갈 위험.
+
+**[MEDIUM] SignRequest/VerifyRequest 입력 검증 부재**
+요청 페이로드 크기 제한 없음. 이전 DSA 크기 제한 이슈(test_edge.py) 재현 가능.
+
+**[LOW] slowCallDurationThreshold = readTimeout 동일 설정**
+slow call과 timeout 중복 집계 가능. 의도한 값인지 재확인 필요.
+
+### 테스트 공백
+- CRYPTO_ENGINE_URL 미설정 시 기본값 동작
+- /actuator/metrics 무인증 접근 여부
+- CB OPEN 상태 Fallback 실제 동작
+- 대용량 SignRequest 입력 거부
+- HTTP 평문 전송 여부
+- CB 인스턴스명 매핑 정확성
+
+### 수정 제안 (텍스트)
+1. CRYPTO_ENGINE_URL 기본값 https:// 변경 또는 http:// 시작 시 fail-fast
+2. metrics 를 별도 management port로 분리하거나 제거
+3. Feign RequestInterceptor로 고정 API Key 주입 계획 추가
+4. CRYPTO_ENGINE_URL allowlist 검증으로 SSRF 방어
+5. configs.default → instances.crypto-engine 으로 명시적 CB 인스턴스 설정
+6. Controller @Size 또는 max-request-size 제한 추가

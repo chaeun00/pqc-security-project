@@ -61,7 +61,7 @@ services:
           cpus: "${API_GATEWAY_CPU_LIMIT:-0.5}"
           memory: "${API_GATEWAY_MEM_LIMIT:-512m}"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 5

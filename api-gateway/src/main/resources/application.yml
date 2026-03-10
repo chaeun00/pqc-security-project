@@ -1,11 +1,44 @@
 server:
   port: 8080
 
+crypto:
+  engine:
+    url: ${CRYPTO_ENGINE_URL:http://crypto-engine:8000}
+
+spring:
+  cloud:
+    openfeign:
+      circuitbreaker:
+        enabled: true
+
+feign:
+  client:
+    config:
+      crypto-engine:
+        connectTimeout: 2000
+        readTimeout: 5000
+  micrometer:
+    enabled: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      crypto-engine:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        slowCallDurationThreshold: 5s
+
 management:
+  server:
+    port: 8081
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,metrics,circuitbreakers
   endpoint:
     health:
-      show-details: never
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true

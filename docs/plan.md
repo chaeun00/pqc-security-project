@@ -1126,13 +1126,17 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 - CryptoEngineClient: /dsa/sign, /dsa/verify Feign 인터페이스
 - Resilience4j CircuitBreaker + Fallback 설정
 - Stateless 원칙: 세션 없음, 요청별 독립 호출
-- [관건 1] Spring Boot → Python 엔진 호출 Latency 감소 전략 적용 (비동기 + Fallback)
 
 **Day 3 (3/11): ML-DSA JWT 발급**
 - POST /api/auth/login → JWT 발급
 - JWT payload: userId, algorithm, exp
 - Feign → crypto-engine /dsa/sign → 서명된 JWT 응답
 - [관건 3] NIST 표준 ML-DSA 서명을 JWT 발급 흐름에 적용
+- **다양한 방법을 시도해보며 latency를 줄일 최적을 찾고, 포트폴리오에 기입해라**
+Connection Pooling
+HTTP/2 적용
+Keep-Alive 활성화
+gRPC(Protocol Buffers) 도입?? json대신 이걸 사용할 수 있는가? 근데 db와의 관계는?
 
 **Day 4 (3/12): JWT 검증 필터 + 인증 레이어 [보안 이슈 해결]**
 - Spring Security JwtAuthFilter: Bearer 토큰 파싱 → Feign → /dsa/verify
@@ -1327,7 +1331,7 @@ cd api-gateway && ./gradlew test --no-daemon
 ---
 ### Week 3 Day 2 (3/10) 세부 계획 — Feign Client 구성
 
-**목표:** Spring Cloud OpenFeign으로 CryptoEngineClient(/dsa/sign, /dsa/verify) 구성 + Resilience4j CircuitBreaker Fallback 적용
+**목표:** Spring Cloud OpenFeign으로 CryptoEngineClient(/dsa/sign, /dsa/verify) 구성 + Resilience4j CircuitBreaker Fallback 적용. + CryptoEngine을 호출하는 latency를 기록하라.
 
 **Step 1 — 의존성 추가 (build.gradle)**
 - spring-cloud-starter-openfeign
@@ -1344,9 +1348,142 @@ cd api-gateway && ./gradlew test --no-daemon
 - slidingWindowSize: 10 / failureRateThreshold: 50% / waitDuration: 10s
 - connectTimeout: 2000ms / readTimeout: 5000ms
 - CRYPTO_ENGINE_URL 환경변수 외부 주입
-- **다양한 방법을 시도해보며 최적을 찾고, 포트폴리오에 기입해라**
 
 **인수조건**
 1. sign() 정상 호출 → crypto-engine 200 응답 전달
 2. crypto-engine 중단 시 → CircuitBreaker Fallback → 503 반환
 3. CRYPTO_ENGINE_URL 변경만으로 엔드포인트 교체 가능
+
+---
+
+## 버그픽스 계획 — CB 설정 오류 수정 (2026-03-10)
+
+### 목표
+api-gateway Circuit Breaker 인스턴스 이름 불일치 및 timeout 미정렬 수정 후 서버 정상 기동 확인
+
+### 범위
+1. CB 인스턴스 이름 수정: `instances.crypto-engine` → `configs.default` 또는 메서드 단위 인스턴스명
+2. `slowCallDurationThreshold`를 readTimeout(5s) 기준으로 명시 설정
+3. 서버 기동 후 actuator 엔드포인트 및 CB 동작 검증
+
+### 인수조건
+1. `curl http://localhost:8080/actuator/metrics/feign.client.requests` → 200
+2. `curl http://localhost:8080/actuator/health` → `{"status":"UP"}`
+3. crypto-engine 강제 다운 시 CB OPEN + Fallback 동작 확인
+
+---
+
+## 취약점 수정 계획 — Week 3 Day 2 리뷰 기반 (2026-03-10)
+
+### 목표
+Week 3 Day 2 리뷰의 HIGH/MEDIUM 취약점을 Day 2~4에 순서대로 해결한다.
+
+### Step 1 [Day 2 잔여] — metrics 관리 포트 분리
+- management.server.port: 8081 설정
+- docker-compose healthcheck → 8081 변경
+
+### Step 2 [Day 2~3] — CB 인스턴스명 명시적 설정
+- configs.default → instances.crypto-engine (실제 CB 이름 확인 후 결정)
+- @CircuitBreaker 어노테이션 인스턴스명과 일치 검증
+
+### Step 3 [Day 3] — DTO 입력 검증 + 서비스 간 인증 설계
+- SignRequest/VerifyRequest @Size 추가
+- Feign RequestInterceptor API Key 헤더 주입 계획
+
+### 인수조건
+1. 8080에서 /actuator/metrics 접근 불가 (8081에서만 허용)
+2. CB 설정 인스턴스명 매핑 → actuator CB 상태 정상 노출
+3. 초과 크기 SignRequest → 400 반환
+
+---
+
+## 취약점 수정 계획 v2 — Week 3 Day 2 리뷰 기반 정합성 수정 (2026-03-10)
+
+> 버그픽스 계획(위)은 `configs.default` 설정 완료 상태. 로직 검증은 아래 Step 2에서 수행.
+> [LOW] slowCallDurationThreshold = readTimeout(5s): timeout 요청을 CB failureRate에 포함시키기 위한 의도적 설계. **기각.**
+
+### 목표
+Week 3 Day 2 리뷰 수정 제안 6건을 Day 2~4에 순서대로 해결한다.
+
+### Step 1 [Day 2 잔여] — metrics 관리 포트 분리 + HTTP fail-fast
+- `management.server.port: 8081` 설정 → 8080에서 metrics 접근 차단
+- docker-compose api-gateway healthcheck URL → 8081 변경
+- `@ConfigurationProperties + @Validated` 로 CRYPTO_ENGINE_URL이 `http://` 로 시작 시 애플리케이션 기동 실패 처리
+
+### Step 2 [Day 3] — CB 인스턴스명 명시적 설정 + 로직 검증
+- `configs.default` → `instances.crypto-engine` 으로 명시적 CB 인스턴스 설정
+- `@CircuitBreaker(name = "crypto-engine")` 어노테이션 인스턴스명 일치 확인
+- crypto-engine 강제 다운 시 CB OPEN → Fallback 503 실제 동작 검증
+
+### Step 3 [Day 3~4] — DTO 입력 검증 + SSRF 방어 + 서비스 간 인증 설계
+- `SignRequest` / `VerifyRequest` `@Size(max=65536)` 추가, Controller `@Valid` 바인딩
+- SSRF 방어: docker-compose `pqc-internal` 네트워크 격리(1차) + `CryptoEngineUrlValidator` Bean으로 허용 호스트 검증(2차)
+- Feign `RequestInterceptor`로 고정 API Key 헤더 주입 계획 (Day 4 Spring Security 도입 시 병행)
+
+### 인수조건
+1. `curl http://localhost:8080/actuator/metrics` → 연결 거부 / `curl http://localhost:8081/actuator/metrics` → 200
+2. CB `instances.crypto-engine` 매핑 + Fallback 503 실제 동작 확인
+3. 초과 크기 `SignRequest` → 400 / `http://` URL 기동 시 → 애플리케이션 시작 실패
+
+---
+
+## Week 3 Day 2 세부 계획 보완 항목 (2026-03-10)
+
+> Day 2 세부 계획(L1328) 작성 시 누락된 항목 — 사후 보완 등록
+
+**[HIGH 보완] CRYPTO_ENGINE_URL 기본값 http:// 차단 전략 미명시**
+- L1346에 "환경변수 외부 주입" 만 기술됨
+- 실제 application.yml 기본값: `http://crypto-engine:8000` (평문)
+- 처리: `@ConfigurationProperties + @Validated` 로 http:// 시작 시 기동 실패
+- → **취약점 수정 계획 v2 Step 1로 이관**
+
+**[MEDIUM 보완] SignRequest/VerifyRequest DTO 크기 제한 미명시**
+- L1338~1340 DTO 설계에 @Size 제약 없음
+- 커밋 f76cacf DSA message 크기 제한 보안 수정 선례 — Feign DTO 동일 경로 재현 가능
+- 처리: `@Size(max=65536)` + Controller `@Valid` 바인딩
+- → **취약점 수정 계획 v2 Step 3으로 이관**
+
+---
+
+## test-gateway-http-fail 행(Hang) 수정 계획 (2026-03-10)
+
+### 원인
+`bootRun` = Gradle 컴파일 + Spring Boot 기동 → 30초 초과 후 kill.
+검증 로직(`@AssertTrue`)은 정상. 테스트 실행 방식 문제.
+
+### 수정 방향
+- `bootRun` → `java -jar build/libs/api-gateway.jar` 로 교체
+- JAR 없을 경우 `./gradlew build -x test` 먼저 실행하도록 의존성 추가
+- timeout 30s → 10s 로 단축
+
+### 인수조건
+1. `make test-gateway-http-fail` 10초 내 완료
+2. `http://` URL → PASS (`must use HTTPS` 확인)
+3. JAR 미빌드 시 명확한 에러 메시지
+
+---
+
+## CI 동기화 계획 — Day 2 테스트 (2026-03-10)
+
+### 현황
+- test-gateway-unit: CI 포함 ✅
+- test-gateway-http-fail: CI 미포함 ❌ → Step 1에서 추가
+- test-gateway-ports: CI 미포함 ❌ + management.server.port=8081 구현 선행 필요
+- test-gateway-validation: CI 미포함 ❌ + 앱 기동 필요
+
+### Step 1 [즉시] — test-gateway-http-fail CI 추가
+- api-gateway-build 잡에 스텝 추가
+- ./gradlew build -x test → java -jar + http:// URL → must use HTTPS 확인
+
+### Step 2 [management.server.port=8081 구현 후] — 포트/검증 테스트 CI 추가
+- api-gateway:ci 이미지 docker run -d 기동
+- test-gateway-ports: 8081 200 / 8080 거부
+- test-gateway-validation: 초과 크기 POST → 400
+
+### Step 3 — CI 잡 스텝 순서
+빌드 → http-fail → docker run → ports + validation → Trivy
+
+### 인수조건
+1. CI api-gateway-build에서 test-gateway-http-fail PASS
+2. management.server.port=8081 구현 후 test-gateway-ports CI PASS
+3. 로컬 make test-gateway = CI 검증 항목 동일

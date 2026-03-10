@@ -1,0 +1,4 @@
+# dev 프로파일 — 내부 Docker 네트워크에서 HTTP crypto-engine 연결 허용
+crypto:
+  engine:
+    allow-http: true

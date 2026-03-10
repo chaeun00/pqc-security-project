@@ -1,0 +1,61 @@
+Starting a Gradle Daemon, 1 incompatible and 1 stopped Daemons could not be reused, use --status for details
+Exception in thread "DisconnectableInputStream source reader" org.gradle.api.UncheckedIOException: java.io.IOException: Bad file descriptor
+	at org.gradle.internal.UncheckedException.throwAsUncheckedException(UncheckedException.java:62)
+	at org.gradle.internal.UncheckedException.throwAsUncheckedException(UncheckedException.java:41)
+	at org.gradle.util.internal.DisconnectableInputStream$1.run(DisconnectableInputStream.java:127)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+Caused by: java.io.IOException: Bad file descriptor
+	at java.base/java.io.FileInputStream.readBytes(Native Method)
+	at java.base/java.io.FileInputStream.read(FileInputStream.java:287)
+	at java.base/java.io.BufferedInputStream.read1(BufferedInputStream.java:345)
+	at java.base/java.io.BufferedInputStream.implRead(BufferedInputStream.java:420)
+	at java.base/java.io.BufferedInputStream.read(BufferedInputStream.java:399)
+	at org.gradle.util.internal.DisconnectableInputStream$1.run(DisconnectableInputStream.java:98)
+	... 1 more
+> Task :compileJava UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :resolveMainClassName
+
+> Task :bootRun
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v3.4.4)
+
+2026-03-10T09:38:07.308+09:00  INFO 19551 --- [           main] com.pqc.gateway.ApiGatewayApplication    : Starting ApiGatewayApplication using Java 21.0.10 with PID 19551 (/home/ssafy/projects/pqc-security-project/api-gateway/build/classes/java/main started by ssafy in /home/ssafy/projects/pqc-security-project/api-gateway)
+2026-03-10T09:38:07.309+09:00  INFO 19551 --- [           main] com.pqc.gateway.ApiGatewayApplication    : No active profile set, falling back to 1 default profile: "default"
+2026-03-10T09:38:07.850+09:00  INFO 19551 --- [           main] o.s.cloud.context.scope.GenericScope     : BeanFactory id=77559e23-bb4e-330b-be32-f1aa83943042
+2026-03-10T09:38:07.981+09:00  INFO 19551 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-03-10T09:38:07.988+09:00  INFO 19551 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-03-10T09:38:07.988+09:00  INFO 19551 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.39]
+2026-03-10T09:38:08.011+09:00  INFO 19551 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-03-10T09:38:08.011+09:00  INFO 19551 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 678 ms
+2026-03-10T09:38:08.351+09:00  INFO 19551 --- [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 2 endpoints beneath base path '/actuator'
+2026-03-10T09:38:08.379+09:00  INFO 19551 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-03-10T09:38:08.395+09:00  INFO 19551 --- [           main] com.pqc.gateway.ApiGatewayApplication    : Started ApiGatewayApplication in 1.343 seconds (process running for 1.568)
+2026-03-10T09:38:15.419+09:00  INFO 19551 --- [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-03-10T09:38:15.420+09:00  INFO 19551 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-03-10T09:38:15.420+09:00  INFO 19551 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 0 ms
+
+> Task :bootRun FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':bootRun'.
+> Process 'command '/usr/lib/jvm/temurin-21-jdk-amd64/bin/java'' finished with non-zero exit value 137
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3m 17s
+4 actionable tasks: 2 executed, 2 up-to-date
