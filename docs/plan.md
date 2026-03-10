@@ -1134,9 +1134,9 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 - [관건 3] NIST 표준 ML-DSA 서명을 JWT 발급 흐름에 적용
 - **다양한 방법을 시도해보며 latency를 줄일 최적을 찾고, 포트폴리오에 기입해라**
   1. Connection Pooling
-  2. HTTP/2 적용
+  2. HTTP/2 적용(하려했으나 uvicorn에서 미지원이므로 기각)
   3. Keep-Alive 활성화
-  4. gRPC(Protocol Buffers) 도입?? json대신 이걸 사용할 수 있는가? 근데 db와의 관계는?
+  4. gRPC(Protocol Buffers) 도입?? json대신 이걸 사용할 수 있는가? (Day 5 이후)
 
 **Day 4 (3/12): JWT 검증 필터 + 인증 레이어 [보안 이슈 해결]**
 - Spring Security JwtAuthFilter: Bearer 토큰 파싱 → Feign → /dsa/verify
@@ -1487,3 +1487,31 @@ Week 3 Day 2 리뷰 수정 제안 6건을 Day 2~4에 순서대로 해결한다.
 1. CI api-gateway-build에서 test-gateway-http-fail PASS
 2. management.server.port=8081 구현 후 test-gateway-ports CI PASS
 3. 로컬 make test-gateway = CI 검증 항목 동일
+
+---
+
+### Week 3 Day 3 (3/11) 세부 계획 — ML-DSA JWT 발급
+
+**목표:** POST /api/auth/login → ML-DSA 서명 JWT 발급 + Feign 커넥션 최적화로 latency 측정·기록
+
+**Step 1 — POST /api/auth/login 구현**
+- LoginRequest: userId, password (데모용 고정 인증 허용)
+- JwtPayload 생성: userId, algorithm: ML-DSA-65, exp: now+1h
+- CryptoEngineClient.sign(payload) → 서명값 수신
+- LoginResponse: token (Header.Payload.Signature 구조)
+
+**Step 2 — Feign 커넥션 최적화(미적용으로 시작, 단계적으로 적용하여 성능 개선 포트폴리오에 기입)**
+- Feign 기본 HttpURLConnection → OkHttpClient 교체
+  - maxIdleConnections: 5 / keepAliveDuration: 30s
+- Keep-Alive: uvicorn 기본 지원 확인
+- HTTP/2: uvicorn 미지원 → **기각** (근거: uvicorn HTTP/2 미지원)
+- gRPC: **Day 5 이후로 이동** (proto 설계 + FastAPI 전환 비용 초과)
+
+**Step 3 — latency 측정 + 포트폴리오 기록**
+- 최적화 전/후 feign.client.requests 지표 비교
+- 수치 결과를 docs/portfolio-notes.md 에 기록
+
+**인수조건**
+1. POST /api/auth/login → JWT 200 응답
+2. crypto-engine 다운 시 CB Fallback → 503
+3. OkHttpClient 교체 후 latency before/after 수치 기록
