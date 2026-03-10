@@ -10,7 +10,7 @@
 
 COMPOSE := DOCKER_CONTENT_TRUST=1 docker compose
 
-.PHONY: up down build build-secure build-secure-db build-secure-crypto build-secure-gateway build-secure-dashboard logs ps test-dct test-db trivy inspect-limits verify-all health-check health-recheck setup help
+.PHONY: up down build build-secure build-secure-db build-secure-crypto build-secure-gateway build-secure-dashboard logs ps test-dct test-db trivy inspect-limits verify-all health-check health-recheck setup help test-gateway test-gateway-unit test-gateway-http-fail test-gateway-ports test-gateway-validation
 
 # ── 기본 타겟 ─────────────────────────────────────────────
 .DEFAULT_GOAL := help
@@ -293,3 +293,101 @@ verify-all: ## [Step 1-B] 빌드→기동→HTTP 왕복→inspect-limits 통합 
 	@echo "==> [verify-all 4/4] inspect-limits"
 	@$(MAKE) inspect-limits
 	@echo "==> [verify-all] 모든 인수조건 통과 ✓"
+
+# ──────────────────────────────────────────────────────────
+# test-gateway — Week 3 Day 2 api-gateway 인수조건 검증
+#
+#   test-gateway-unit     : AC2 CB 인스턴스+Fallback 503, AC3a DTO @Size (Gradle 테스트)
+#   test-gateway-http-fail: AC3b http:// URL 기동 실패 (allow-http 없이 bootRun → 예외 확인)
+#   test-gateway-ports    : AC1 metrics 포트 분리 (앱 기동 중일 때만 실행 가능)
+#   test-gateway-validation: AC3a 초과 크기 SignRequest → 400 (앱 기동 중일 때만)
+#   test-gateway          : unit + http-fail 자동 실행. 포트/검증은 앱 기동 시 자동 포함
+# ──────────────────────────────────────────────────────────
+
+test-gateway-unit: ## [Step 2-Day2 AC2] Gradle 테스트 — CB 인스턴스·Fallback 503 검증
+	@echo "==> [test-gateway-unit] Gradle 테스트 시작 ──────────"
+	@cd api-gateway && ./gradlew test
+	@echo "==> [test-gateway-unit] PASS ✓"
+
+test-gateway-http-fail: ## [Step 2-Day2 AC3b] http:// URL 기동 실패 검증 (java -jar, 10초)
+	@echo "==> [test-gateway-http-fail] http:// URL 기동 실패 확인 (최대 10초) ──"
+	@JAR=api-gateway/build/libs/api-gateway-0.0.1-SNAPSHOT.jar; \
+	if [ ! -f "$$JAR" ]; then \
+		echo "==> JAR 없음 — 빌드 먼저 실행 (테스트 생략)"; \
+		cd api-gateway && ./gradlew build -x test -q; \
+	fi
+	@OUTPUT=$$(timeout 10 java \
+		-Dcrypto.engine.url=http://bad-host:8000 \
+		-jar api-gateway/build/libs/api-gateway-0.0.1-SNAPSHOT.jar \
+		2>&1 || true); \
+	if echo "$$OUTPUT" | grep -q "must use HTTPS"; then \
+		echo "==> [test-gateway-http-fail] PASS ✓ — 기동 실패 메시지 확인"; \
+	else \
+		echo "==> [test-gateway-http-fail] FAIL — 예상 메시지 미출력"; \
+		echo "$$OUTPUT" | tail -20; \
+		exit 1; \
+	fi
+
+test-gateway-ports: ## [Step 2-Day2 AC1] metrics 포트 분리 검증 (앱 기동 중 필요)
+	@echo "==> [test-gateway-ports] metrics 포트 분리 검증 ──────"
+	@if ! curl -s http://localhost:8081/actuator/health > /dev/null 2>&1; then \
+		echo "==> SKIP — localhost:8081 응답 없음. 앱을 먼저 기동하세요."; \
+		echo "         make gateway-run  또는  docker compose up api-gateway"; \
+		exit 0; \
+	fi
+	@echo "==> [AC1-1] 8080에서 actuator/metrics 차단 확인"
+	@CODE=$$(curl -s -o /dev/null -w "%{http_code}" \
+		--max-time 3 http://localhost:8080/actuator/metrics 2>/dev/null || echo "000"); \
+	if [ "$$CODE" = "000" ] || [ "$$CODE" = "404" ]; then \
+		echo "==> [AC1-1] PASS ✓ — 8080 actuator/metrics 차단 (응답코드: $$CODE)"; \
+	else \
+		echo "==> [AC1-1] FAIL — 8080에서 actuator/metrics 접근 가능 (응답코드: $$CODE)"; \
+		exit 1; \
+	fi
+	@echo "==> [AC1-2] 8081에서 actuator/metrics 정상 응답 확인"
+	@CODE=$$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/actuator/metrics); \
+	if [ "$$CODE" = "200" ]; then \
+		echo "==> [AC1-2] PASS ✓ — 8081 actuator/metrics 200 OK"; \
+	else \
+		echo "==> [AC1-2] FAIL — 8081 actuator/metrics 응답코드: $$CODE"; \
+		exit 1; \
+	fi
+	@echo "==> [test-gateway-ports] PASS ✓"
+
+test-gateway-validation: ## [Step 2-Day2 AC3a] 초과 크기 SignRequest → 400 (앱 기동 중 필요)
+	@echo "==> [test-gateway-validation] DTO 크기 제한 검증 ──────"
+	@which python3 > /dev/null 2>&1 || { echo "Error: python3 미설치"; exit 1; }
+	@if ! curl -s http://localhost:8080/api/health > /dev/null 2>&1; then \
+		echo "==> SKIP — localhost:8080 응답 없음. 앱을 먼저 기동하세요."; \
+		exit 0; \
+	fi
+	@echo "==> [AC3a] 65537바이트 message → POST /dsa/sign → 400 확인"
+	@CODE=$$(python3 -c "import json; print(json.dumps({'message':'A'*65537}))" \
+		| curl -s -o /dev/null -w "%{http_code}" \
+		  -X POST http://localhost:8080/dsa/sign \
+		  -H "Content-Type: application/json" \
+		  -d @-); \
+	if [ "$$CODE" = "400" ]; then \
+		echo "==> [AC3a] PASS ✓ — 초과 크기 요청 400 Bad Request"; \
+	else \
+		echo "==> [AC3a] FAIL — 응답코드: $$CODE (400 예상)"; \
+		exit 1; \
+	fi
+	@echo "==> [test-gateway-validation] PASS ✓"
+
+test-gateway: ## [Step 2-Day2] api-gateway 인수조건 전체 검증 (AC1~3)
+	@echo "==> [test-gateway] Week 3 Day 2 인수조건 검증 시작 ════"
+	@echo "==> [1/4] AC2+AC3a — Gradle 유닛테스트"
+	@$(MAKE) test-gateway-unit
+	@echo "==> [2/4] AC3b — http:// URL 기동 실패"
+	@$(MAKE) test-gateway-http-fail
+	@echo "==> [3/4] AC1 — metrics 포트 분리 (앱 기동 중이면 검증, 아니면 SKIP)"
+	@$(MAKE) test-gateway-ports
+	@echo "==> [4/4] AC3a — DTO 크기 제한 400 (앱 기동 중이면 검증, 아니면 SKIP)"
+	@$(MAKE) test-gateway-validation
+	@echo "==> [test-gateway] 완료 ✓"
+
+gateway-run: ## [Step 2-Day2] api-gateway 로컬 기동 (dev 프로파일, http 허용)
+	@echo "==> api-gateway 로컬 기동 (Ctrl+C 로 종료) ──────────"
+	@cd api-gateway && ./gradlew bootRun \
+		--args='--spring.profiles.active=dev --crypto.engine.url=http://localhost:8000'

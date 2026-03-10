@@ -1133,10 +1133,10 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
 - Feign → crypto-engine /dsa/sign → 서명된 JWT 응답
 - [관건 3] NIST 표준 ML-DSA 서명을 JWT 발급 흐름에 적용
 - **다양한 방법을 시도해보며 latency를 줄일 최적을 찾고, 포트폴리오에 기입해라**
-Connection Pooling
-HTTP/2 적용
-Keep-Alive 활성화
-gRPC(Protocol Buffers) 도입?? json대신 이걸 사용할 수 있는가? 근데 db와의 관계는?
+  1. Connection Pooling
+  2. HTTP/2 적용
+  3. Keep-Alive 활성화
+  4. gRPC(Protocol Buffers) 도입?? json대신 이걸 사용할 수 있는가? 근데 db와의 관계는?
 
 **Day 4 (3/12): JWT 검증 필터 + 인증 레이어 [보안 이슈 해결]**
 - Spring Security JwtAuthFilter: Bearer 토큰 파싱 → Feign → /dsa/verify
