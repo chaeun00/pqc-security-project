@@ -1515,3 +1515,114 @@ Week 3 Day 2 리뷰 수정 제안 6건을 Day 2~4에 순서대로 해결한다.
 1. POST /api/auth/login → JWT 200 응답
 2. crypto-engine 다운 시 CB Fallback → 503
 3. OkHttpClient 교체 후 latency before/after 수치 기록
+
+**잠재적 위험 (Risks)**
+- ObjectMapper.writeValueAsBytes(Map.of(...)) 는 키 순서가 비결정적 → JWT payload 재현 불가. 데모 목적이므로 허용.
+- loggerLevel: BASIC 설정 시 요청 URL이 로그에 노출됨. 프로덕션 전 제거 또는 NONE으로 변경 필요.
+
+## Step 2-Day 3 — feign-micrometer 메트릭 누락 수정 계획 (2026-03-11)
+
+### 원인
+`spring-cloud-starter-openfeign` (Spring Cloud 2024.0.0) 이 `feign-micrometer` JAR을
+자동 포함하지 않아 `feign.client.requests` 메트릭이 빈 배열(`[]`) 반환.
+`application.yml`의 `feign.micrometer.enabled: true`는 JAR이 없으면 무효.
+
+### 수정 대상
+- 파일: `api-gateway/build.gradle`
+- 변경: `implementation 'io.github.openfeign:feign-micrometer'` 1줄 추가
+
+### 검증
+docker-compose up -d --build api-gateway 후
+`/actuator/metrics/feign.client.requests` 에서 `feign.client.requests` 확인
+
+### feign 메트릭 이름 변경 확인 (2026-03-11)
+Spring Cloud OpenFeign 4.x (2024.0.x) + Spring Boot 3.x Observation API 표준화로
+`feign.client.requests` → `http.client.requests` 로 변경됨.
+올바른 actuator 쿼리:
+  GET /actuator/metrics/http.client.requests?tag=uri:/dsa/sign
+
+---
+
+## Step 2-Day 3 — OkHttpClient 교체 계획 (2026-03-11)
+
+### Before 수치 (HttpURLConnection 기본값)
+- Cold: 평균 200ms = PQC 알고리즘 초기화 비용
+- Warm: 평균 3ms = ML-DSA-65 실제 서명 처리 성능
+- 측정 방법: AuthService System.nanoTime() + http.client.requests actuator
+
+### 질문에 대한 답
+1. 커넥션 풀 설정값(`maxIdleConnections, keepAliveDuration`)은 여러 조합의 시나리오를 만들고, 부하테스트를 통해 성능을 확인할 수 있도록 코드를 작성해라
+2. OkHttp 교체 후 수동 측정 코드를 제거하고 메트릭으로 일원화
+
+### 변경 대상
+1. build.gradle: `implementation 'io.github.openfeign:feign-okhttp'` 추가
+2. application.yml: `spring.cloud.openfeign.okhttp.enabled: true` 추가
+3. 신규 config/OkHttpFeignConfig.java: maxIdleConnections=5, keepAliveDuration=30s
+
+### 인수조건
+1. availableTags clientName → OkHttpClient 확인
+2. warm latency after ≤ before
+3. docs/portfolio-notes.md before/after 표 기록
+
+## Step 2-Day 3 — OkHttpClient 활성화 세부 계획 (2026-03-11)
+
+### 변경 대상
+1. application.yml: `spring.cloud.openfeign.okhttp.enabled: true` 추가
+2. 신규 config/OkHttpFeignConfig.java:
+   - maxIdleConnections: 5
+   - keepAliveDuration: 30s
+   - connectTimeout: 2s / readTimeout: 5s (기존 feign timeout 동일)
+
+### Before 수치 (HttpURLConnection)
+- cold: 190ms / warm: 2ms
+- 측정: AUTH-LATENCY 로그 + http.client.requests actuator
+
+### 검증 순서
+docker-compose up -d --build api-gateway
+→ 100회 로그인
+→ availableTags clientName OkHttp 확인
+→ AUTH-LATENCY after 평균 측정
+→ docs/portfolio-notes.md before/after 표 기록
+
+### 측정 횟수 결정 (2026-03-11)
+- 채택: 100회 반복 (포트폴리오 신뢰도)
+- 기록 지표: cold 1회, warm p50/p95/p99
+- AUTH-LATENCY 로그 100줄 → awk 평균 계산
+  docker-compose logs api-gateway | grep AUTH-LATENCY \
+    | awk -F'latency=' '{sum+=$2; count++} END {print "avg="sum/count"ms, n="count}'
+EOF
+
+### 인수조건
+1. clientName → OkHttp 클라이언트 확인
+2. warm latency after ≤ 2ms
+3. portfolio-notes.md before/after 기록 완료
+
+---
+
+## Step 2-Day 3 — gunicorn workers 튜닝 계획 (2026-03-11)
+
+### 목적
+동시 요청 처리량 병목이 crypto-engine worker 수임을 실험으로 검증.
+workers=1/2/4 조건에서 동시 요청 latency 비교 → 최적값 결정.
+
+### 질문에 대한 답변
+- 리소스 제약: .env에 CRYPTO_ENGINE_MEM_LIMIT=512m — workers=4 시 메모리 초과 가능성 있음. 실험 전 MEM_LIMIT 조정할 것인가? => 당장은 조정하지 않되, workers 수에 따른 메모리 사용량을 반드시 측정하여 기록해야한다.
+- 동시 요청 수: workers=N 실험에서 동시 요청 몇 개로 측정할 것인가? => workers × 2 배수 권장: 1,2,4,8
+
+### 제약사항
+- --preload 반드시 유지: worker별 독립 키쌍 생성 방지
+- CRYPTO_ENGINE_MEM_LIMIT=512m: workers 증가 시 모니터링 필요
+
+### 변경 대상
+1. crypto-engine/Dockerfile CMD: `-w 2` → `-w ${GUNICORN_WORKERS:-2}`
+2. config/crypto-engine.env: `GUNICORN_WORKERS=2` 추가
+
+### 측정 방법
+workers=N 설정 후 동시 N*2개 요청:
+  for i in $(seq N); do curl ... > /dev/null & done; wait
+  docker-compose logs api-gateway | grep AUTH-LATENCY → avg/p95
+
+### 인수조건
+1. GUNICORN_WORKERS 환경변수로 workers 수 제어 가능
+2. workers=4 > workers=1 동시 처리 latency 개선 수치 확보
+3. --preload 유지로 전 설정에서 JWT 정상 반환

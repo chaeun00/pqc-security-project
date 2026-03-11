@@ -10,6 +10,17 @@ spring:
     openfeign:
       circuitbreaker:
         enabled: true
+      okhttp:
+        enabled: true
+
+# OkHttpClient 커넥션 풀 — 부하테스트 시나리오별로 값을 바꿔가며 측정
+# 시나리오 A (기본): maxIdle=5,  keepAlive=30s
+# 시나리오 B (확장): maxIdle=20, keepAlive=60s  (환경변수로 주입)
+# 시나리오 C (최소): maxIdle=1,  keepAlive=10s
+okhttp:
+  pool:
+    max-idle-connections: ${OKHTTP_MAX_IDLE:5}
+    keep-alive-duration-seconds: ${OKHTTP_KEEP_ALIVE_SEC:30}
 
 feign:
   client:
@@ -17,6 +28,7 @@ feign:
       crypto-engine:
         connectTimeout: 2000
         readTimeout: 5000
+        loggerLevel: BASIC   # FeignLatencyLogger 활성화 (BASIC = request line + response status + latency)
   micrometer:
     enabled: true
 
