@@ -421,3 +421,82 @@ jobs:
           severity: CRITICAL
           exit-code: '1'
           format: table
+
+  # ── auth-integration-test (Day 3 — JWT 발급 통합 검증) ──────
+  auth-integration-test:
+    name: JWT 발급 통합 테스트 (POST /api/auth/login)
+    runs-on: ubuntu-latest
+    needs: [build-and-trivy, api-gateway-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: crypto-engine 컨테이너 기동 (포트 8000 공개)
+        run: |
+          docker run -d --name crypto-engine \
+            -p 8000:8000 \
+            -e KEM_ALGORITHM_ID=ML-KEM-768 \
+            -e DSA_ALGORITHM_ID=ML-DSA-65 \
+            -e LOG_LEVEL=INFO \
+            pqc-security-project-crypto-engine:latest
+
+      - name: crypto-engine 헬스체크 대기 (최대 120초)
+        run: |
+          timeout 120 bash -c '
+            until curl -sf http://localhost:8000/health > /dev/null 2>&1; do
+              echo "crypto-engine 대기 중..."; sleep 5
+            done
+            echo "crypto-engine healthy ✓"
+          '
+
+      - name: Java 21 설치
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Gradle wrapper 캐시
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: api-gateway JAR 빌드 (-x test)
+        working-directory: api-gateway
+        run: ./gradlew build -x test --no-daemon -q
+
+      - name: api-gateway 기동 (java -jar, HTTP 허용)
+        working-directory: api-gateway
+        run: |
+          java \
+            -Dcrypto.engine.url=http://localhost:8000 \
+            -Dcrypto.engine.allow-http=true \
+            -jar build/libs/api-gateway-0.0.1-SNAPSHOT.jar &
+
+      - name: api-gateway 헬스체크 대기 (최대 60초)
+        run: |
+          timeout 60 bash -c '
+            until curl -sf http://localhost:8081/actuator/health > /dev/null 2>&1; do
+              echo "api-gateway 대기 중..."; sleep 3
+            done
+            echo "api-gateway healthy ✓"
+          '
+
+      - name: "[AC1] POST /api/auth/login → 200 + JWT 구조 확인"
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:8080/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"userId":"demo","password":"demo123"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          DOT_COUNT=$(echo "$TOKEN" | tr -cd '.' | wc -c)
+          echo "token: ${TOKEN:0:40}... (dots: $DOT_COUNT)"
+          [ "$DOT_COUNT" -eq 2 ] \
+            && echo "PASS ✓ — JWT 200 + 구조(. 2개) 확인" \
+            || { echo "FAIL — JWT 구조 불일치 (dots=$DOT_COUNT)"; exit 1; }

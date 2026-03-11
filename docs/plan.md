@@ -1655,3 +1655,35 @@ workers=N 설정 후 동시 N*2개 요청:
 1. 두 조건의 docker stats RSS 수치 기록 완료
 2. worker 수에 비례한 메모리 증가 패턴 확인
 3. docs/portfolio-notes.md before/after 테이블 저장
+
+---
+
+## Step 2-Day 3 — CI 반영 계획 (2026-03-11)
+
+**목표:** Day 3 인수조건(JWT 200 / CB Fallback 503)을 CI로 검증
+
+**질문에 대한 답변:**
+1. CB Fallback 503 검증 방식: 통합 잡에서 crypto-engine을 실제로 죽인 후 503을 확인할까요, 아니면 단위 테스트(Mock)로 CB Fallback을 커버할까요? (통합 방식은 잡 복잡도가 올라감) => 할 수 있다면 테스트 코드 내에서 WireMock을 사용해 503 응답을 가상화하세요. 이는 외부 의존성 없이도 CB의 Circuit Open -> Fallback 실행 로직을 가장 빠르고 정확하게 검증하는 방법입니다.
+2. api-gateway 빌드 방식: 통합 잡에서 api-gateway도 Docker 이미지로 기동해야 하나요, 아니면 java -jar 기동으로 충분한가요? => 효율성 측면에서는 java -jar 기동이 압도적으로 유리
+3. latency 수치(인수조건 3): portfolio-notes.md에 이미 기록됐으니 CI 자동 검증 범위에서 제외해도 되나요? => 제외해라.
+
+**Step 1 — AuthControllerTest 단위 테스트**
+- @WebMvcTest + @MockBean CryptoEngineClient
+- 정상 로그인 → 200 + token 필드 존재
+- 잘못된 인증 → 401
+- sign() throws → 503 (CB Fallback 시뮬레이션)
+
+**Step 2 — auth-integration-test CI job 추가**
+- needs: [build-and-trivy]
+- crypto-engine + api-gateway(dev) 동시 기동
+- POST /api/auth/login curl → 200 + JWT 구조("." 2개) 확인
+
+**Step 3 — 인수조건 매핑**
+- 인수조건 1 (JWT 200): auth-integration-test
+- 인수조건 2 (CB 503): AuthControllerTest 단위 테스트
+- 인수조건 3 (latency): portfolio-notes.md 수동 기록, CI 제외
+
+**인수조건**
+1. AuthControllerTest 3케이스 ./gradlew test PASS
+2. auth-integration-test POST /api/auth/login → JWT 200 PASS
+3. GitHub Actions 모든 잡 green
