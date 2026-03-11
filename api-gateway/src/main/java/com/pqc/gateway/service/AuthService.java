@@ -62,7 +62,7 @@ public class AuthService {
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
-            log.error("JWT 생성 실패: {}", e.getMessage());
+            log.error("JWT 생성 실패");
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "JWT 생성 실패");
         }
     }

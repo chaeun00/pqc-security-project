@@ -209,3 +209,89 @@ slow call과 timeout 중복 집계 가능. 의도한 값인지 재확인 필요.
 4. CRYPTO_ENGINE_URL allowlist 검증으로 SSRF 방어
 5. configs.default → instances.crypto-engine 으로 명시적 CB 인스턴스 설정
 6. Controller @Size 또는 max-request-size 제한 추가
+
+---
+## [Day 3] ML-DSA JWT 발급 보안 리뷰 (2026-03-11)
+
+### 변경 요약 (Summary of change)
+
+Day 3 diff 기준: AuthController + AuthService (ML-DSA JWT 발급), algorithm_factory.py (환경변수 키쌍 주입),
+gen-dsa-keypair.sh (키쌍 생성 스크립트), application.yml (OkHttp + Feign logger) 신규 추가.
+
+---
+
+### 위험 요소 및 엣지 케이스 (Risks / Edge cases)
+
+#### HIGH
+
+**1. 평문 비밀번호 소스코드 하드코딩** — AuthService.java:26
+  - `private static final String DEMO_PASSWORD = "demo123";`
+  - 데모용임을 주석으로 명시했으나, git 히스토리에 영구적으로 평문으로 남는다.
+    나중에 "데모용"이 프로덕션으로 미끄러지는 사고의 가장 흔한 원인이다.
+
+**2. Non-constant-time 비밀번호 비교** — AuthService.java:38
+  - `if (!DEMO_USER.equals(request.userId()) || !DEMO_PASSWORD.equals(request.password()))`
+  - String.equals()는 첫 불일치 바이트에서 즉시 반환된다.
+    응답 시간 차이로 userId 존재 여부를 추론하는 타이밍 어택에 노출된다.
+
+#### MEDIUM
+
+**3. DSA 개인키 환경변수 주입 시 포맷 미검증** — algorithm_factory.py:10-11
+  - `_DSA_SECRET_KEY: bytes = base64.b64decode(_secret_key_b64)`
+  - DSA_SECRET_KEY_B64가 잘못된 Base64이거나 올바른 알고리즘(ML-DSA-65)의 키가 아닐 경우
+    디코딩은 성공하지만 이후 서명 시 런타임 오류가 발생한다.
+    이 오류는 AuthService에서 HTTP 500으로 뭉개지며 어떤 키를 사용했는지 추적이 불가능해진다.
+
+**4. 개인키가 stdout으로 출력됨** — gen-dsa-keypair.sh:29-30
+  - `print('DSA_SECRET_KEY_B64=' + base64.b64encode(sec).decode())`
+  - 스크립트 출력이 터미널 히스토리, CI/CD 파이프라인 로그, 쉘 스크립트 리디렉션 실수 등으로
+    개인키가 평문으로 잔류할 수 있다. 생성된 파일에 대한 chmod 600 안내가 없다.
+
+**5. 로그인 엔드포인트 Rate Limit 없음** — AuthController.java:23
+  - Day 3 범위 내에서 /api/auth/login에 대한 요청 제한이 없다.
+    demo123 같은 취약 비밀번호와 조합되면 브루트포스가 사실상 무제한이다.
+
+#### LOW
+
+**6. 예외 메시지 로깅** — AuthService.java:62
+  - `log.error("JWT 생성 실패: {}", e.getMessage());`
+  - e.getMessage()가 liboqs 내부 오류 문자열이나 키 관련 상세 정보를 포함할 경우
+    로그를 통한 내부 상태 노출이 된다.
+
+**7. Feign logger level BASIC** — application.yml:31
+  - 현재 BASIC은 URL + 상태코드만 기록하므로 직접적 문제는 없다.
+    그러나 signingInput(JWT header+payload)이 Feign 요청 바디에 포함되어 있어,
+    향후 logger level을 FULL로 바꾸면 서명 대상 페이로드가 통째로 로그에 찍힌다.
+
+---
+
+### 테스트 공백 (Test gaps)
+
+| 구분 | 누락된 케이스 |
+|---|---|
+| AuthController | userId / password 빈 값(@NotBlank) 검증 — 400 응답 여부 |
+| AuthService | 잘못된 자격증명 → 정확히 401 반환 확인 |
+| AuthService | crypto-engine sign() 호출 실패 시 → 500 처리 경로 |
+| algorithm_factory | DSA_SECRET_KEY_B64만 주입하고 DSA_PUBLIC_KEY_B64 누락 시 동작 (if 조건 양쪽 다 있어야 분기 진입) |
+| algorithm_factory | 잘못된 Base64 값 주입 시 모듈 로드 실패 여부 |
+| gen-dsa-keypair.sh | crypto-engine 이미지가 존재하지 않을 때 오류 메시지 출력 확인 |
+
+---
+
+### 수정 제안 (Suggested fixes — 텍스트만)
+
+1. 하드코딩 자격증명: DEMO_USER / DEMO_PASSWORD를 환경변수로 분리하고,
+   소스코드에는 기본값 없이 기동 시 명시적 예외로 fail-fast 처리한다.
+
+2. 타이밍 어택: MessageDigest.isEqual(a.getBytes(), b.getBytes()) 방식의
+   constant-time 비교로 교체한다.
+
+3. 개인키 환경변수 검증: algorithm_factory.py에서 키 로드 직후
+   len(_DSA_SECRET_KEY)가 ML-DSA-65 명세상 기대 크기인지 어설션으로 검증하고,
+   불일치 시 기동 중단하는 가드를 추가한다.
+
+4. gen-dsa-keypair.sh 출력: 키 생성 결과를 stdout 대신 chmod 600이 적용된 파일로
+   직접 쓰도록 변경하고, 스크립트 헤더에 "출력 파일을 git에 커밋하지 말 것" 경고를 추가한다.
+
+5. Rate Limit: Spring Cloud Gateway의 RequestRateLimiter 필터를 /api/auth/login 경로에 적용하거나,
+   최소한 IP 기준 일정 시간 내 요청 횟수 제한을 설정한다.

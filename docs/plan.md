@@ -1149,6 +1149,7 @@ docker compose ps 실행 시 전체 서비스 env_file 파싱 → api-gateway.en
   2. SecurityConfig.java: csrf().disable() (Stateless REST)
   3. SecurityConfig.java: 나머지 경로 → authenticated()
   ※ 미이행 시: docker-compose healthcheck 403 → restart loop → 전체 스택 기동 불가
+- Day 4 통합 위험 수정(1 + 2 + 5)
 
 **Day 5 (3/13): Week 3 통합 + CI**
 - make test-dct 포함 통합 확인
@@ -1687,3 +1688,39 @@ workers=N 설정 후 동시 N*2개 요청:
 1. AuthControllerTest 3케이스 ./gradlew test PASS
 2. auth-integration-test POST /api/auth/login → JWT 200 PASS
 3. GitHub Actions 모든 잡 green
+
+---
+
+## Day 3 보안 위험 수정 계획 (2026-03-11 리뷰 기반)
+
+**목표:** review.md Day 3 타당 위험 6건을 복잡도 기준으로 Day 3 패치 / Day 4 통합으로 분산 반영
+
+### Day 3 즉시 패치 (3건)
+
+**Step 1 — 위험 3: algorithm_factory.py 키 크기 어설션**
+- b64decode 후 len(_DSA_SECRET_KEY) == 4032 어설션 추가
+- 불일치 시 ValueError 기동 중단 (fail-fast)
+- 변경 파일: crypto-engine/app/algorithm_factory.py 1줄
+
+**Step 2 — 위험 4: gen-dsa-keypair.sh stdout → 파일 출력**
+- 키 생성 결과를 config/crypto-engine.env 직접 write
+- chmod 600 자동 적용, git 커밋 금지 경고 추가
+
+**Step 3 — 위험 6: AuthService 로깅 마스킹**
+- log.error("JWT 생성 실패: {}", e.getMessage()) → log.error("JWT 생성 실패")
+- 변경 파일: AuthService.java 1줄
+
+### Day 4 통합 (3건)
+
+**Step 4 — 위험 1+2: 인증 정보 환경변수 분리 + constant-time 비교**
+- DEMO_USER/DEMO_PASSWORD 환경변수 주입, 소스코드 제거
+- String.equals() → MessageDigest.isEqual() 교체
+
+**Step 5 — 위험 5: Rate Limit (Spring MVC 인터셉터)**
+- ConcurrentHashMap<String, AtomicInteger> 인메모리 IP 기반 제한
+- 의존성 추가 없음
+
+**인수조건**
+1. Day 3 패치 3건 커밋 후 CI green 유지
+2. Day 4 후 git grep "demo123" 결과 없음
+3. 잘못된 키 주입 시 컨테이너 기동 중단 테스트 PASS
