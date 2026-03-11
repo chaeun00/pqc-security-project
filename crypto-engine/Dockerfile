@@ -67,6 +67,6 @@ USER nonroot
 
 EXPOSE 8000
 
-# --preload: master에서 algorithm_factory.py 1회 로드 → fork()로 worker 상속
-# worker별 독립 keypair 생성 방지 → DSA public_key 항상 일치
-CMD ["sh", "-c", "gunicorn -k uvicorn.workers.UvicornWorker -w ${GUNICORN_WORKERS:-2} --preload -b 0.0.0.0:8000 app.main:app"]
+# DISABLE_PRELOAD=0 (기본): --preload 포함 → master 1회 로드 + fork() 상속
+# DISABLE_PRELOAD=1 (실험): --preload 제거 → worker별 독립 로드 + DSA_SECRET_KEY_B64/DSA_PUBLIC_KEY_B64 필수
+CMD ["sh", "-c", "PRELOAD=$([ \"${DISABLE_PRELOAD:-0}\" = '1' ] && echo '' || echo '--preload') && gunicorn -k uvicorn.workers.UvicornWorker -w ${GUNICORN_WORKERS:-2} $PRELOAD -b 0.0.0.0:8000 app.main:app"]

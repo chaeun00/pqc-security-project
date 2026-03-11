@@ -1626,3 +1626,32 @@ workers=N 설정 후 동시 N*2개 요청:
 1. GUNICORN_WORKERS 환경변수로 workers 수 제어 가능
 2. workers=4 > workers=1 동시 처리 latency 개선 수치 확보
 3. --preload 유지로 전 설정에서 JWT 정상 반환
+
+---
+
+## --preload 제거 메모리 실험 계획 (2026-03-11)
+
+**목표:** gunicorn --preload 제거 전/후 crypto-engine RSS 메모리 증가량 측정·비교
+
+**질문에 대한 답변:**
+- worker 수 기준: 실험 시 GUNICORN_WORKERS 환경변수 값은 내가 직접 조정하겠다.
+- 측정 도구: docker stats (컨테이너 전체 RSS) 로 충분
+- DSA 키쌍 불일치 허용 여부: --preload 제거 시 worker별 keypair가 달라져 /dsa/verify가 실패합니다. 키쌍을 외부(파일/환경변수)로 분리하는 방향을 이용하라.
+
+**Step 1 — 베이스라인 (with --preload)**
+- GUNICORN_WORKERS=4 고정, 컨테이너 기동
+- docker stats --no-stream crypto-engine
+- docker exec crypto-engine ps aux (PID별 RSS 합산)
+
+**Step 2 — --preload 제거 후 측정**
+- Dockerfile CMD에서 --preload 제거 후 재빌드·재기동
+- 동일 측정 반복 → worker별 독립 liboqs 로드 + DSA 키쌍 생성 메모리 확인
+
+**Step 3 — 결과 기록**
+- 전/후 RSS 수치를 docs/portfolio-notes.md 테이블로 기록
+- 증가량 = worker별 추가 메모리 × worker 수
+
+**인수조건**
+1. 두 조건의 docker stats RSS 수치 기록 완료
+2. worker 수에 비례한 메모리 증가 패턴 확인
+3. docs/portfolio-notes.md before/after 테이블 저장
