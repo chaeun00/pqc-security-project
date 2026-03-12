@@ -1830,3 +1830,36 @@ workers=N 설정 후 동시 N*2개 요청:
 1. api-gateway-build + auth-integration-test CI green (파손 해소)
 2. JwtAuthInterceptorTest 2케이스 PASS
 3. /dsa/sign 401/200 CI 스텝 PASS
+
+---
+
+## Day 5 — Week 3 통합 + CI 구체화 계획 (2026-03-13)
+
+**목표:** JwtAuthInterceptorTest 단위 테스트 작성 + api-gateway 포함 전체 스택 docker-compose CI 잡 추가
+
+※ Day 4에서 선제 완료된 항목: api-gateway Trivy CI, JWT 발급·검증 왕복 CI, 미인증 401 CI, 포트 분리
+
+### 질문에 대한 답
+1. 전체 스택 CI 잡 위치: stack-integration-test 잡 신설을 권장(관심사 분리, 원인 격리)
+2. Day 5 후 Day 6(KEM 재설계)로 넘어가는 기준: 
+  - CI 전체 green
+  - stack-integration-test에서 로그인→토큰→보호 엔드포인트 E2E 플로우 pass
+  - DEMO_PASSWORD 환경변수 기본값 없는 상태로 CI pass
+
+### Step 1 — JwtAuthInterceptorTest.java 신규 작성
+- 케이스 1: Authorization 헤더 없음 → false + 401
+- 케이스 2: verifiedCache 캐시 히트 → true (crypto-engine 미호출)
+- @AfterEach shutdown() 스케줄러 누수 방지
+
+### Step 2 — stack-integration-test CI 잡 신설
+- needs: [build-and-trivy, api-gateway-build]
+- docker compose up crypto-engine + api-gateway --wait
+- 8081/actuator/health healthy + POST /api/auth/login 200 확인
+
+### Step 3 — Week 3 인수조건 최종 점검
+- AC1 JWT 발급 200 / AC2 미인증 401 / AC3 전체 스택 healthy
+
+**인수조건**
+1. JwtAuthInterceptorTest 2케이스 PASS → api-gateway-build CI green
+2. stack-integration-test 잡 api-gateway healthy 확인
+3. CI 전체 잡 green → Day 6 진입
