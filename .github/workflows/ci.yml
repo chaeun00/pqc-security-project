@@ -346,6 +346,8 @@ jobs:
         run: |
           OUTPUT=$(timeout 10 java \
             -Dcrypto.engine.url=http://bad-host:8000 \
+            -Dauth.demo.user=demo \
+            -Dauth.demo.password=demo123 \
             -jar build/libs/api-gateway-0.0.1-SNAPSHOT.jar 2>&1 || true)
           if echo "$OUTPUT" | grep -q "must use HTTPS"; then
             echo "PASS ✓ — http:// URL 기동 실패 확인"
@@ -371,6 +373,8 @@ jobs:
             -p 8080:8080 -p 8081:8081 \
             -e SPRING_PROFILES_ACTIVE=dev \
             -e CRYPTO_ENGINE_URL=http://nonexistent:8000 \
+            -e DEMO_USER=demo \
+            -e DEMO_PASSWORD=demo123 \
             api-gateway:ci
 
       - name: "[AC1·AC3a] 헬스체크 대기 (최대 60초)"
@@ -407,10 +411,10 @@ jobs:
               -X POST http://localhost:8080/dsa/sign \
               -H "Content-Type: application/json" \
               -d @-)
-          if [ "$CODE" = "400" ]; then
-            echo "PASS ✓ — 초과 크기 요청 400 Bad Request"
+          if [ "$CODE" = "400" ] || [ "$CODE" = "401" ]; then
+            echo "PASS ✓ — 초과 크기 요청 ${CODE} 거부 확인 (JWT 미인증 또는 body 크기 초과)"
           else
-            echo "FAIL — 응답코드: $CODE (400 예상)"
+            echo "FAIL — 응답코드: $CODE (400 또는 401 예상)"
             exit 1
           fi
 
@@ -478,6 +482,8 @@ jobs:
           java \
             -Dcrypto.engine.url=http://localhost:8000 \
             -Dcrypto.engine.allow-http=true \
+            -Dauth.demo.user=demo \
+            -Dauth.demo.password=demo123 \
             -jar build/libs/api-gateway-0.0.1-SNAPSHOT.jar &
 
       - name: api-gateway 헬스체크 대기 (최대 60초)
@@ -500,3 +506,31 @@ jobs:
           [ "$DOT_COUNT" -eq 2 ] \
             && echo "PASS ✓ — JWT 200 + 구조(. 2개) 확인" \
             || { echo "FAIL — JWT 구조 불일치 (dots=$DOT_COUNT)"; exit 1; }
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: "[AC3b] JWT 검증 — Bearer /dsa/sign → 200"
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/dsa/sign \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"message":"hello"}')
+          if [ "$CODE" = "200" ]; then
+            echo "PASS ✓ — 유효 JWT → /dsa/sign 200"
+          else
+            echo "FAIL — 응답코드: $CODE (200 예상)"
+            exit 1
+          fi
+
+      - name: "[AC3b] JWT 검증 — 토큰 없이 /dsa/sign → 401"
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/dsa/sign \
+            -H "Content-Type: application/json" \
+            -d '{"message":"hello"}')
+          if [ "$CODE" = "401" ]; then
+            echo "PASS ✓ — 토큰 없음 → /dsa/sign 401"
+          else
+            echo "FAIL — 응답코드: $CODE (401 예상)"
+            exit 1
+          fi

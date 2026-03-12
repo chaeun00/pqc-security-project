@@ -2,3 +2,8 @@
 crypto:
   engine:
     url: https://test-crypto-engine:8000
+
+auth:
+  demo:
+    user: demo
+    password: testpass

@@ -295,3 +295,35 @@ gen-dsa-keypair.sh (키쌍 생성 스크립트), application.yml (OkHttp + Feign
 
 5. Rate Limit: Spring Cloud Gateway의 RequestRateLimiter 필터를 /api/auth/login 경로에 적용하거나,
    최소한 IP 기준 일정 시간 내 요청 횟수 제한을 설정한다.
+
+---
+
+## Day 4 통합 + 보안 위험 추가 수정 리뷰 (2026-03-12)
+
+### 변경 요약
+- AuthService: 하드코딩 자격증명 → env var 분리, constant-time 비교, jti 추가
+- JwtKeyCache (신규): jti 기준 공개키 인메모리 캐시
+- JwtAuthInterceptor (신규): 3단계 JWT 검증 (exp → verifiedCache → crypto-engine)
+- RateLimitInterceptor (신규): IP 슬라이딩 윈도우 + 60초 cleanup scheduler
+- WebMvcConfig (신규): 인터셉터 등록, /api/auth/**, /api/health 제외
+
+### 위험 요소 및 엣지 케이스
+- [HIGH] JwtAuthInterceptor L112: verifiedCache.removeIf() — 매 성공 요청마다 O(n) full-scan
+- [MEDIUM] RateLimitInterceptor: getRemoteAddr() — 리버스 프록시 환경에서 Rate Limit 무력화
+- [MEDIUM] JwtKeyCache: 미사용 토큰 엔트리 exp까지 잔류
+- [LOW] JWT 오류 메시지 세분화로 token state enumeration 가능
+- [LOW] DEMO_USER에 기본값 잔존 (DEMO_PASSWORD는 fail-fast, 비대칭)
+
+### 테스트 공백
+- JwtAuthInterceptor 단위 테스트 전무 (인수조건 1 자동화 미충족)
+- RateLimitInterceptor preHandle 429 반환 테스트 없음 (인수조건 3 자동화 미충족)
+
+### 수정 제안
+1. verifiedCache cleanup → ScheduledExecutorService 60초 주기로 분리
+2. JWT 오류 메시지 "Unauthorized" 단일화
+3. DEMO_USER 기본값 제거 (fail-fast 일관성)
+4. RateLimitInterceptorTest: preHandle 429 케이스 추가
+5. JwtAuthInterceptor: MockMvc 기반 최소 통합 테스트 2건 추가
+
+### Day 5 진행 가능 여부
+조건부 가능 — JwtAuthInterceptor 최소 테스트 + preHandle 429 테스트 추가 후 진행 권장

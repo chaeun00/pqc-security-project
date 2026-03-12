@@ -2,6 +2,7 @@ package com.pqc.gateway.controller;
 
 import com.pqc.gateway.client.CryptoEngineClient;
 import com.pqc.gateway.dto.DsaSignResponse;
+import com.pqc.gateway.filter.JwtKeyCache;
 import com.pqc.gateway.service.AuthService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,9 @@ class AuthControllerTest {
     @MockBean
     CryptoEngineClient cryptoEngineClient;
 
+    @MockBean
+    JwtKeyCache jwtKeyCache;
+
     // 인수조건 1: 정상 로그인 → 200 + JWT 구조("." 2개)
     @Test
     void login_success_returns200WithToken() throws Exception {
@@ -39,7 +43,7 @@ class AuthControllerTest {
         mvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"userId":"demo","password":"demo123"}
+                                {"userId":"demo","password":"testpass"}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").exists())
@@ -67,7 +71,7 @@ class AuthControllerTest {
         mvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"userId":"demo","password":"demo123"}
+                                {"userId":"demo","password":"testpass"}
                                 """))
                 .andExpect(status().isServiceUnavailable());
     }

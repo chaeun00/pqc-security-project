@@ -1,6 +1,11 @@
 server:
   port: 8080
 
+auth:
+  demo:
+    user: ${DEMO_USER}
+    password: ${DEMO_PASSWORD}
+
 crypto:
   engine:
     url: ${CRYPTO_ENGINE_URL:http://crypto-engine:8000}
@@ -40,6 +45,9 @@ resilience4j:
         failureRateThreshold: 50
         waitDurationInOpenState: 10s
         slowCallDurationThreshold: 5s
+
+rate-limit:
+  max-requests-per-second: ${RATE_LIMIT_RPS:20}
 
 management:
   server:

@@ -1724,3 +1724,109 @@ workers=N 설정 후 동시 N*2개 요청:
 1. Day 3 패치 3건 커밋 후 CI green 유지
 2. Day 4 후 git grep "demo123" 결과 없음
 3. 잘못된 키 주입 시 컨테이너 기동 중단 테스트 PASS
+
+**목표:** /dsa/** 엔드포인트를 ML-DSA JWT로 보호하는 검증 필터/인증 레이어를 추가하고, 하드코딩 인증정보·타이밍공격·Rate Limit 3건 보안 이슈를 해결한다.
+
+### 질문에 대한 답
+1. JWT 검증 방식: '캐싱'을 결합한 엄격한 검증 (Hybrid Approach). 매번 crypto-engine을 호출하는 것이 부담스럽다면, 검증 결과의 '상태'를 로컬이나 분산 캐시(Redis)에 저장.
+  - 1단계 (Local): 필터에서 exp 및 기본 구조 체크 (비용 낮음).
+  - 2단계 (Cache): 해당 JWT의 Hash값을 키로 하여 캐시에 "검증 완료" 상태가 있는지 확인.
+  - 3단계 (Crypto-engine): 캐시에 없다면 crypto-engine 호출하여 PQC 서명 검증. 결과가 성공이면 캐시에 저장 (TTL은 JWT의 잔여 만료 시간으로 설정).
+2. Rate Limit 단위: IP당 '초(second)' 기준 + '슬라이딩 윈도우(Sliding Window)' 방식
+3. 보호 대상 엔드포인트 범위: /api/auth/login을 제외한 전체 엔드포인트에 적용. 보안 프로젝트로서의 완성도를 생각한다면, 특정 경로(dsa/**)만 보호하기보다 서비스 전체의 신뢰성을 확보.
+
+### Step 1 — 위험 1+2: 인증 정보 환경변수 분리 + constant-time 비교
+- DEMO_USER/DEMO_PASSWORD → application.yml ${ENV_VAR} 패턴으로 분리
+- String.equals() → MessageDigest.isEqual() 교체
+- 변경 파일: AuthService.java + application.yml
+
+### Step 2 — JWT 검증 필터 + 인증 레이어
+- 신규: JwtAuthFilter.java (OncePerRequestFilter 또는 HandlerInterceptor)
+- 신규: WebMvcConfig.java (필터/인터셉터 등록, /dsa/** 보호)
+- 검증: Bearer 토큰 파싱 → 3파트 분리 → exp 만료 확인 → (서명 검증 방식 결정 후)
+- 실패 시 401 반환
+
+### Step 3 — 위험 5: Rate Limit (Spring MVC 인터셉터)
+- 신규: RateLimitInterceptor.java
+- ConcurrentHashMap<String, AtomicInteger> 인메모리 IP 기반 제한
+- 임계 초과 시 429 반환, WebMvcConfig.java에 통합 등록
+- 의존성 추가 없음
+
+**인수조건**
+1. /dsa/sign JWT 없이 401, 유효 JWT 200 확인
+2. git grep "demo123" 결과 없음
+3. 임계치 초과 요청 시 429 응답 확인
+
+---
+
+## Day 4 — 보안 위험 추가 수정 계획 (2026-03-12 리뷰 기반)
+
+### 위험 1: JwtKeyCache 인메모리 → 현재 범위 외, 기술 부채 기록
+- docs/portfolio-notes.md에 스케일아웃 시 Redis 교체 필요 명시
+
+### 위험 2: ipTimestamps 무한 성장 → 주기 정리 스케줄러 추가
+- Step A: RateLimitInterceptor 내 ScheduledExecutorService 60초 주기 정리
+- Step B: 빈 Deque 또는 만료 IP 키 제거 로직
+- Step C: @PreDestroy executor 종료
+- 인수조건: 정리 후 비활성 IP 키 제거 단위 테스트 PASS
+
+---
+
+## Day 4 — 리뷰 후속 수정 계획 (2026-03-12)
+
+**목표:** verifiedCache O(n) 제거·JwtKeyCache 주기 정리를 스케줄러 분리, JWT 오류 메시지 단일화, DEMO_USER fail-fast 적용, 테스트 자동화 완성
+
+### 질문에 대한 답
+1. JwtKeyCache의 cleanup과 단일 스케줄러로 통합. 별도의 컴포넌트를 두어, 여기서 두 캐시의 cleanup() 메서드를 순차적으로 호출. 이렇게 하면 파일 수는 절약하면서도, 각 클래스는 자기 자신의 캐시를 비우는 로직만 가지므로 책임 분리(SRP)도 달성.
+2. JWT 오류 메시지 단일화 범위: 응답 Body의 message 필드를 "Unauthorized"로 단일화하는 방식.
+3. DEMO_USER 기본값 제거 시, application-test.yml(또는 test @TestPropertySource)에서 DEMO_USER를 주입하고 있는지 확인이 필요 — 구현 전, 반드시 확인.
+
+### Step 1 — verifiedCache O(n) removeIf 제거 + 스케줄러 분리 / JwtKeyCache cleanup 추가
+- JwtAuthInterceptor: removeIf() 제거, ScheduledExecutorService 60초 주기 cleanup + @PreDestroy
+- JwtKeyCache: cleanup() 메서드 + 60초 스케줄러 추가
+
+### Step 2 — JWT 오류 메시지 단일화 + DEMO_USER fail-fast
+- JwtAuthInterceptor: 오류 메시지 7종 → "Unauthorized" 단일화
+- application.yml: ${DEMO_USER:demo} → ${DEMO_USER} (기본값 제거)
+- 테스트 yml에 DEMO_USER=demo 주입 확인
+
+### Step 3 — 테스트 자동화
+- 신규: JwtAuthInterceptorTest (Bearer 없음 401, 캐시 히트 200)
+- 기존: RateLimitInterceptorTest에 preHandle 429 케이스 추가
+
+**인수조건**
+1. git grep "removeIf" 0건
+2. JwtAuthInterceptorTest 2건 + preHandle 429 테스트 PASS
+3. git grep "DEMO_USER:demo" 0건 + CI green
+
+---
+
+## Day 4 — CI 반영 계획 (2026-03-12)
+
+**목표:** DEMO_USER fail-fast로 파손되는 기존 CI 잡 수정 + JWT 인증 레이어 CI 검증 추가
+
+### 질문에 대한 답
+1. JwtAuthInterceptorTest 단위 테스트 파일이 아직 없는데, CI 잡 추가 전에 단위 테스트 파일을 먼저 작성해야 할까요, 아니면 CI 잡과 동시에 계획할까요? => JwtAuthInterceptorTest.java는 이미 존재.
+2. JWT 검증 통합 CI 잡의 위치: 기존 auth-integration-test 잡에 스텝 추가를 권장.
+3. api-gateway-build 잡(line 368)의 docker run 환경변수 주입 방식: GitHub Actions env: 블록(잡 레벨)으로 관리를 권장. 단, 지금 당장 CI가 깨질수 있는 두 곳() 존재:
+  - api-gateway-build L370 docker run	-e DEMO_PASSWORD 없음	${DEMO_PASSWORD} 기본값 없어서 컨테이너 기동 실패
+  - auth-integration-test L499 curl	"password":"demo123" 하드코딩	환경변수 분리 후에도 평문 잔존
+
+### Step 1 — 기존 잡 파손 수정
+- api-gateway-build: docker run에 -e DEMO_USER=demo -e DEMO_PASSWORD=demo123 추가
+- auth-integration-test: java -jar에 -Dauth.demo.user=demo -Dauth.demo.password=demo123 추가
+- 변경 파일: .github/workflows/ci.yml (2 스텝)
+
+### Step 2 — JwtAuthInterceptorTest 단위 테스트 신규 작성
+- 케이스 1: Bearer 헤더 없음 → false + 401
+- 케이스 2: verifiedCache 캐시 히트 → true (crypto-engine Mock 없음)
+- ./gradlew test → api-gateway-build 잡 자동 커버
+
+### Step 3 — JWT 검증 통합 CI 스텝 추가 (auth-integration-test 잡 내)
+- 스텝 A: 기존 $TOKEN으로 /dsa/sign Bearer 요청 → 200 확인
+- 스텝 B: 토큰 없이 /dsa/sign 요청 → 401 확인
+
+**인수조건**
+1. api-gateway-build + auth-integration-test CI green (파손 해소)
+2. JwtAuthInterceptorTest 2케이스 PASS
+3. /dsa/sign 401/200 CI 스텝 PASS

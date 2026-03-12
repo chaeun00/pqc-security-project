@@ -176,4 +176,17 @@ GUNICORN_WORKERS=16
 ---
 
 
+---
+
+## JwtKeyCache — 기술 부채 (스케일아웃 시 Redis 교체 필요)
+
+현재 `JwtKeyCache`는 단일 JVM 인메모리(`ConcurrentHashMap`)로 구현되어 있다.
+api-gateway 인스턴스가 2개 이상으로 스케일아웃되면 **인스턴스 간 캐시 불일치**가 발생하여 유효한 JWT가 거부될 수 있다.
+
+- **해결책:** `ConcurrentHashMap` → Redis(또는 Redis Cluster)로 교체. TTL을 JWT `exp`와 동일하게 설정하면 만료 엔트리 자동 삭제도 지원됨.
+- **마이그레이션 경로:** `JwtKeyCache.put/get` 인터페이스만 유지한 채 내부 구현을 `RedisTemplate`으로 교체하면 되는 구조로 설계됨.
+- **우선순위:** 단일 인스턴스 데모 범위에서는 현행 유지 가능. 수평 확장 전 반드시 교체 필요.
+
+---
+
 => 결론. 프로덕션에서 --preload가 제거된다고 가정했을 때, 가용 메모리는 비교적 넉넉하지만 코어 개수가 28로 제한된다는 점에서 crypto-engine의 가용 코어는 최대 16개 언저리. 또한  gunicorn_workers를 무작정 높인다고 성능을 좋아지는게 아니라, 코어개수의 *2 이하에서 높 성능을 뽑아낸다는 점을 보았을 때, crypto-engine의 가용메모리는 적어도 1gb 이상이어야함. workers를 최대 성능을 고려하여 끌어올린 수치가 32일때 1gb에 근접하기 때문.
