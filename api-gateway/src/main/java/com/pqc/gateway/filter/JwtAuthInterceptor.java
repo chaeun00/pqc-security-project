@@ -32,7 +32,12 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(JwtAuthInterceptor.class);
 
     // SHA-256(token) → expiry (epoch second)
-    final ConcurrentHashMap<String, Long> verifiedCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> verifiedCache = new ConcurrentHashMap<>();
+
+    /** 테스트 전용: verifiedCache에 항목을 직접 주입한다. */
+    void putVerifiedCache(String tokenHash, long expiry) {
+        verifiedCache.put(tokenHash, expiry);
+    }
 
     private final CryptoEngineClient cryptoEngineClient;
     private final JwtKeyCache jwtKeyCache;

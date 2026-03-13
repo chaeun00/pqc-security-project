@@ -61,7 +61,7 @@ class JwtAuthInterceptorTest {
 
         byte[] hashBytes = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
         String tokenHash = HexFormat.of().formatHex(hashBytes);
-        interceptor.verifiedCache.put(tokenHash, exp);
+        interceptor.putVerifiedCache(tokenHash, exp);
 
         MockHttpServletRequest req = new MockHttpServletRequest();
         req.addHeader("Authorization", "Bearer " + token);
@@ -70,5 +70,39 @@ class JwtAuthInterceptorTest {
         boolean result = interceptor.preHandle(req, resp, new Object());
 
         assertTrue(result);
+    }
+
+    // Plan C: 만료된 토큰 → 401
+    @Test
+    void preHandle_expiredToken_returns401() throws Exception {
+        long expiredAt = Instant.now().getEpochSecond() - 1;
+
+        String headerB64 = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"alg\":\"ML-DSA-65\",\"typ\":\"JWT\"}".getBytes(StandardCharsets.UTF_8));
+        String payloadB64 = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(("{\"sub\":\"test\",\"exp\":" + expiredAt + ",\"jti\":\"test-jti\"}").getBytes(StandardCharsets.UTF_8));
+        String token = headerB64 + "." + payloadB64 + ".fakesig";
+
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("Authorization", "Bearer " + token);
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+
+        boolean result = interceptor.preHandle(req, resp, new Object());
+
+        assertFalse(result);
+        assert resp.getStatus() == UNAUTHORIZED.value();
+    }
+
+    // Plan C: 잘못된 구조(점 2개 미만) → 401
+    @Test
+    void preHandle_malformedStructure_returns401() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("Authorization", "Bearer not.a.valid.jwt.parts");
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+
+        boolean result = interceptor.preHandle(req, resp, new Object());
+
+        assertFalse(result);
+        assert resp.getStatus() == UNAUTHORIZED.value();
     }
 }

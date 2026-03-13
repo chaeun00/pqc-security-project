@@ -327,3 +327,40 @@ gen-dsa-keypair.sh (키쌍 생성 스크립트), application.yml (OkHttp + Feign
 
 ### Day 5 진행 가능 여부
 조건부 가능 — JwtAuthInterceptor 최소 테스트 + preHandle 429 테스트 추가 후 진행 권장
+
+---
+## Day 5 리뷰 (2026-03-13)
+
+### 변경 요약
+- `.github/workflows/ci.yml` +63라인: `stack-integration-test` 잡 신설
+- `JwtAuthInterceptorTest.java` 2케이스 추가 (헤더 없음 → 401, 캐시 히트 → 200)
+
+### 위험 요소 및 엣지 케이스
+
+**[높음] stack-integration-test — E2E Bearer 플로우 미완성**
+- `[AC1]` 스텝에서 `TOKEN`이 `$GITHUB_ENV`로 export되지 않음 (ci.yml:589-600)
+- docker compose 전체 스택 기준 Bearer→/dsa/sign 200, 미인증→401 스텝 없음
+- Day 5 진입 기준 "로그인→토큰→보호 엔드포인트 E2E 플로우 pass" 미충족
+
+**[중간] docker compose ps -q 공백 오진**
+- ci.yml:583: `$(docker compose ps -q api-gateway)` 빈 문자열 시 `docker inspect` 가 모든 컨테이너 조회 또는 오류 없이 통과 가능
+
+**[낮음] JwtAuthInterceptorTest 내부 상태 직접 접근**
+- `interceptor.verifiedCache.put(...)` 패키지 접근 — `verifiedCache` 가시성 변경 시 테스트 깨짐
+
+### 테스트 공백
+| 누락 케이스 | 중요도 |
+|---|---|
+| 만료 토큰 (exp 과거값) → 401 | 높음 |
+| 잘못된 JWT 구조 (점 1개/3개 이상) → 401 | 중간 |
+| stack-integration-test Bearer→/dsa/sign 200 E2E | 높음 |
+| stack-integration-test 미인증→/dsa/sign 401 E2E | 중간 |
+
+### 수정 제안
+1. stack-integration-test `[AC1]` 말미 `echo "TOKEN=$TOKEN" >> $GITHUB_ENV` 추가 후 Bearer 200 / 미인증 401 스텝 신설
+2. `docker compose ps -q` 결과를 변수로 받아 `-z` 검사 후 `docker inspect` 호출
+3. JwtAuthInterceptorTest에 `exp = now - 1` 만료 케이스 추가
+
+### Day 6 진입 판단
+CI green 조건 충족. E2E Bearer 플로우는 auth-integration-test(java -jar)에서 커버 중이므로 중복 허용 시 Day 6 진입 가능.
+[높음] 항목 2개는 Day 6 백로그 등록 권장.

@@ -534,3 +534,89 @@ jobs:
             echo "FAIL — 응답코드: $CODE (401 예상)"
             exit 1
           fi
+
+  # ── stack-integration-test (Day 5 — Week 3 통합 인수조건) ──
+  stack-integration-test:
+    name: 전체 스택 통합 (api-gateway + crypto-engine + db)
+    runs-on: ubuntu-latest
+    needs: [build-and-trivy, api-gateway-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: pqc-db:secure 빌드
+        run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
+
+      - name: api-gateway Docker 빌드 (compose 이미지명으로 태깅)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api-gateway
+          load: true
+          tags: pqc-security-project-api-gateway:latest
+
+      - name: .env + config/*.env 생성 (DEMO 자격증명 주입)
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+          cp config/crypto-engine.env.example config/crypto-engine.env
+          cp config/api-gateway.env.example config/api-gateway.env
+          cp config/dashboard.env.example config/dashboard.env
+          echo "DEMO_USER=demo" >> config/api-gateway.env
+          echo "DEMO_PASSWORD=demo123" >> config/api-gateway.env
+
+      - name: docker compose up (db + crypto-engine + api-gateway, --no-build --wait)
+        run: |
+          docker compose --env-file .env up -d --no-build --wait --wait-timeout 180 db crypto-engine api-gateway
+
+      - name: "[AC2] api-gateway healthy 확인"
+        run: |
+          CID=$(docker compose ps -q api-gateway)
+          [ -z "$CID" ] && { echo "FAIL: api-gateway 컨테이너 미존재"; exit 1; }
+          STATUS=$(docker inspect "$CID" --format '{{.State.Health.Status}}')
+          echo "api-gateway: ${STATUS}"
+          [ "$STATUS" = "healthy" ] || { echo "FAIL: api-gateway not healthy"; exit 1; }
+          echo "PASS ✓ — api-gateway healthy"
+
+      - name: "[AC1] POST /api/auth/login → 200 + JWT 구조 확인"
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:8080/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"userId":"demo","password":"demo123"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          DOT_COUNT=$(echo "$TOKEN" | tr -cd '.' | wc -c)
+          echo "token dots: ${DOT_COUNT}"
+          [ "$DOT_COUNT" -eq 2 ] \
+            && echo "PASS ✓ — JWT 발급 200 + 구조(. 2개) 확인" \
+            || { echo "FAIL — JWT 구조 불일치 (dots=${DOT_COUNT})"; exit 1; }
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: "[AC1-E2E] Bearer JWT → /dsa/sign 200"
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/dsa/sign \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"message":"hello"}')
+          [ "$CODE" = "200" ] \
+            && echo "PASS ✓ — 유효 JWT → /dsa/sign 200" \
+            || { echo "FAIL — 응답코드: $CODE (200 예상)"; exit 1; }
+
+      - name: "[AC1-E2E] 미인증 → /dsa/sign 401"
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/dsa/sign \
+            -H "Content-Type: application/json" \
+            -d '{"message":"hello"}')
+          [ "$CODE" = "401" ] \
+            && echo "PASS ✓ — 미인증 → /dsa/sign 401" \
+            || { echo "FAIL — 응답코드: $CODE (401 예상)"; exit 1; }

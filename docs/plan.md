@@ -1863,3 +1863,17 @@ workers=N 설정 후 동시 N*2개 요청:
 1. JwtAuthInterceptorTest 2케이스 PASS → api-gateway-build CI green
 2. stack-integration-test 잡 api-gateway healthy 확인
 3. CI 전체 잡 green → Day 6 진입
+
+---
+## Day 6 수정 계획 (2026-03-13)
+
+### Plan A — E2E Bearer 플로우 완성 (높음)
+- ci.yml L599 TOKEN export 추가
+- Bearer→200 / 미인증→401 E2E 스텝 신설
+
+### Plan B — docker inspect 공백 오진 방어 (중간)
+- ps -q 결과 -z 검사 후 exit 1 처리
+
+### Plan C — JwtAuthInterceptorTest 보완 (낮음)
+- 만료/잘못된구조 케이스 추가
+- verifiedCache 내부 접근 캡슐화
