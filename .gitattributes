@@ -1,4 +1,5 @@
 *.sh eol=lf
+gradlew eol=lf
 *.py eol=lf
 *.yml eol=lf
 .env* eol=lf

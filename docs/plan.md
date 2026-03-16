@@ -1877,3 +1877,54 @@ workers=N 설정 후 동시 N*2개 요청:
 ### Plan C — JwtAuthInterceptorTest 보완 (낮음)
 - 만료/잘못된구조 케이스 추가
 - verifiedCache 내부 접근 캡슐화
+
+---
+## [2026-03-16] Day 6 세부 계획 확정판 — KEM API 재설계
+
+### 목표
+/kem/keygen → secret_key 외부 반환 취약점 제거. 서버사이드 키 보관으로 전면 재설계.
+
+### 질문에 대한 답
+1. crypto-engine DB 연결 방식 -> Day 6에서는 기능 구현과 안정성이 우선입니다. psycopg2를 사용하여 기존 구조와의 일관성을 유지하세요. 성능 최적화가 필요한 시점에 비동기로 전환해도 늦지 않습니다.
+2. secret_key 보호 수준: 평문 저장 vs AES 래핑 -> 서버사이드 AES-256-GCM 래핑 포함. PQC(양자 내성 암호) 프로젝트의 본질은 '보안'입니다. DB에 개인키를 평문(Base64)으로 저장하는 것은 프로젝트의 상징성을 저해할 수 있습니다.
+전략: env 파일에 KEM_WRAP_KEY를 추가하고, 그것을 활용한 간단한 래핑 로직을 추가하세요. 이는 Day 6 범위 내에서도 충분히 구현 가능하며, "Security by Design" 원칙을 지키는 모습을 보여줄 수 있습니다.
+3. /kem/encrypt 내 대칭 암호화 포함 여부 -> Day 6은 '키 관리 재설계(Infrastructure)'에 집중. 이미 DB 연동과 인터페이스 변경(Breaking Change)이라는 큰 과업이 있습니다. 여기에 대칭 암호화 흐름까지 무리하게 포함하면 디버깅 범위가 너무 넓어집니다.
+Day 6: /kem/init 및 DB 스키마 완성, /kem/encrypt는 Key ID를 받아 Shared Secret을 생성하고 응답하는 단계까지만 구현.
+Day 7: 생성된 Shared Secret을 활용한 실제 데이터 암호화(AES-256-GCM) 통합.
+
+### 잠재적 위험 대응 가이드
+1. Breaking Change -> test_edge.py를 즉시 업데이트하고, 가능하다면 엔드포인트 버저닝을 통해 하위 호환성을 일시적으로 유지하세요.
+2. DB 연결 실패 -> crypto-engine 시작 시점에 DB 연결을 체크하는 로직을 넣되, docker-compose에서 depends_on: db: condition: service_healthy 설정을 강화하세요.
+3. secret_key DB 저장으로 인한 노출 -> 래핑 처리를 하더라도 DB 백업 파일에 대한 접근 제어 정책을 portfolio-notes에 명시하여 운영 보안 측면을 강조하세요.
+
+### 범위
+- Step 1: crypto-engine DB 연결(psycopg2) + POST /kem/init 신규 (key_metadata INSERT → key_id 반환)
+- Step 2: POST /kem/encrypt 재설계 (key_id+plaintext → DB public_key 조회 → encap+AES-256-GCM → ciphertext)
+- Step 3: api-gateway KemController + Feign 메서드 추가 (POST /api/kem/init, POST /api/kem/encrypt)
+
+### 인수조건
+1. POST /api/kem/init 응답에 secret_key 없음, key_id만 반환
+2. POST /api/kem/encrypt 응답에 shared_secret 없음, ciphertext만 반환
+3. POST /kem/keygen → 410 Gone
+
+---
+## [2026-03-16] Day 6 보안취약점/CI 수정 계획
+
+### 질문에 대한 답
+- Q1. integration-test 잡의 DB 연동 방식 -> 기존 integration-test 잡에 services.postgres 추가 (확장 방식)
+- Q2. http_test.py KEM 섹션 재설계 범위 -> init → encrypt → decrypt (410 Gone 확인) 전체 흐름 재구성
+- Q3. CI용 KEM_WRAP_KEY 주입 방식 -> config/crypto-engine.env의 개발용 고정값 하드코딩
+
+### 목표
+Day 6 리뷰 심각 3건(decryption oracle 잔존, KEM_WRAP_KEY CI 미주입, 003_kem_keys.sql CI 미적용)
++ 중간 1건(테스트 스크립트 구버전) 수정 → CI green 확보
+
+### 범위
+- Step 1: /kem/decrypt → 410 임시 차단 (decryption oracle 보안 제거)
+- Step 2: CI integration-test 잡에 postgres 서비스 + 003 SQL 적용 + KEM_WRAP_KEY/DB_* 주입
+- Step 3: db-schema-test 테이블(4→5)/인덱스(6→7) 기대값 수정 + 테스트 스크립트 Day 6 인터페이스 교체
+
+### 인수조건
+1. POST /kem/decrypt → 410 Gone
+2. CI integration-test: /kem/init + /kem/encrypt 왕복 exit 0
+3. CI db-schema-test: 테이블 5개 + 인덱스 7개 확인 통과

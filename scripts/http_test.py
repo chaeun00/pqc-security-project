@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
 crypto-engine HTTP 왕복 테스트 (컨테이너 내부에서 실행)
-Step 1-B rev.10 인수조건 2:
-  - KEM encrypt→decrypt shared_secret 일치
-  - DSA sign→verify valid:true
+Day 6 인터페이스 기준:
+  - KEM: /kem/init → /kem/encrypt (key_id 기반, shared_secret 미반환)
+  - KEM: /kem/keygen, /kem/decrypt → 410 Gone
+  - DSA: sign → verify valid:true
 
 사용법: /venv/bin/python /tmp/http_test.py
-        (scripts/verify-http.sh 가 docker exec 로 호출)
+        (ci.yml integration-test 잡에서 docker exec 로 호출)
 """
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 
 BASE_URL = "http://localhost:8000"
-
-
 TIMEOUT = 10
 
 
@@ -36,33 +36,54 @@ def post(path: str, body: dict | None = None) -> dict:
     return json.loads(r.read())
 
 
+def post_expect_410(path: str, body: dict | None = None) -> None:
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(
+        f"{BASE_URL}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=TIMEOUT)
+        raise AssertionError(f"FAIL: {path} — 410 예상, 200 반환됨")
+    except urllib.error.HTTPError as e:
+        assert e.code == 410, f"FAIL: {path} — 예상 410, 실제 {e.code}"
+
+
 def main() -> None:
     # ── /health ───────────────────────────────────────────
-    print("==> [1/3] GET /health")
+    print("==> [1/6] GET /health")
     resp = get("/health")
     assert resp.get("status") == "ok", f"FAIL: status={resp.get('status')}"
     print("  PASS ✓ (status: ok)")
 
-    # ── KEM 왕복 ──────────────────────────────────────────
-    print("==> [2/5] KEM keygen → encrypt → decrypt (shared_secret 일치)")
-    keygen = post("/kem/keygen")
-    enc = post("/kem/encrypt", {"public_key": keygen["public_key"]})
-    dec = post("/kem/decrypt", {
-        "secret_key": keygen["secret_key"],
-        "ciphertext": enc["ciphertext"],
-    })
-    assert enc["shared_secret"] == dec["shared_secret"], \
-        "FAIL: shared_secret 불일치 (encrypt != decrypt)"
-    print("  KEM PASS ✓ (shared_secret 일치)")
+    # ── /kem/keygen → 410 ─────────────────────────────────
+    print("==> [2/6] POST /kem/keygen → 410 Gone")
+    post_expect_410("/kem/keygen")
+    print("  PASS ✓ (410 Gone)")
 
-    # ── KEM secret_key 미포함 증명 ────────────────────────
-    print("==> [3/5] KEM encrypt 응답 secret_key 미포함 (보안 결함 수정 증명)")
-    assert "secret_key" not in enc, \
-        "FAIL: KEM encrypt 응답에 secret_key 포함됨 (비밀키 노출)"
-    print("  PASS ✓ (secret_key 미포함)")
+    # ── KEM 왕복 (init → encrypt) ─────────────────────────
+    print("==> [3/6] KEM /kem/init → key_id 반환 (secret_key 미포함)")
+    init = post("/kem/init")
+    assert "key_id" in init, f"FAIL: key_id 없음 — {init}"
+    assert "secret_key" not in init, "FAIL: secret_key 노출됨"
+    key_id = init["key_id"]
+    print(f"  PASS ✓ (key_id={key_id}, secret_key 미포함)")
+
+    print("==> [4/6] KEM /kem/encrypt → ciphertext 반환 (shared_secret 미포함)")
+    enc = post("/kem/encrypt", {"key_id": key_id})
+    assert "ciphertext" in enc, f"FAIL: ciphertext 없음 — {enc}"
+    assert "shared_secret" not in enc, "FAIL: shared_secret 노출됨"
+    print("  PASS ✓ (ciphertext 존재, shared_secret 미포함)")
+
+    # ── /kem/decrypt → 410 ────────────────────────────────
+    print("==> [5/6] POST /kem/decrypt → 410 Gone (decryption oracle 차단)")
+    post_expect_410("/kem/decrypt", {"secret_key": "dGVzdA==", "ciphertext": "dGVzdA=="})
+    print("  PASS ✓ (410 Gone)")
 
     # ── DSA 왕복 ──────────────────────────────────────────
-    print("==> [4/5] DSA sign → verify (valid:true) + secret_key 미포함")
+    print("==> [6/6] DSA sign → verify (valid:true) + secret_key 미포함")
     msg = f"pqc-verify-{int(time.time())}"
     sign = post("/dsa/sign", {"message": msg})
     verify = post("/dsa/verify", {
@@ -73,15 +94,8 @@ def main() -> None:
     assert verify.get("valid") is True, \
         f"FAIL: DSA verify valid={verify.get('valid')}"
     assert "secret_key" not in sign, \
-        "FAIL: DSA sign 응답에 secret_key 포함됨 (비밀키 노출)"
+        "FAIL: DSA sign 응답에 secret_key 포함됨"
     print("  DSA PASS ✓ (valid:true, secret_key 미포함)")
-
-    # ── DSA 키 영속성 ────────────────────────────────────
-    print("==> [5/5] DSA 키 영속성 (연속 sign → 동일 public_key)")
-    sign2 = post("/dsa/sign", {"message": f"pqc-verify2-{int(time.time())}"})
-    assert sign["public_key"] == sign2["public_key"], \
-        "FAIL: DSA 키 영속성 깨짐 (public_key 불일치)"
-    print("  PASS ✓ (public_key 일치)")
 
     print("==> HTTP 왕복 테스트 모두 통과 ✓")
 

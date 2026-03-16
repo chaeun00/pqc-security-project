@@ -364,3 +364,31 @@ gen-dsa-keypair.sh (키쌍 생성 스크립트), application.yml (OkHttp + Feign
 ### Day 6 진입 판단
 CI green 조건 충족. E2E Bearer 플로우는 auth-integration-test(java -jar)에서 커버 중이므로 중복 허용 시 Day 6 진입 가능.
 [높음] 항목 2개는 Day 6 백로그 등록 권장.
+
+---
+
+## [2026-03-16] Day 6 KEM API 재설계 리뷰
+
+### 변경 요약
+Day 6 인수조건 코드 구현 완료. AC1(key_id 반환), AC2(ciphertext만 반환), AC3(keygen 410) 충족.
+
+### 위험 요소 및 엣지 케이스
+- [심각-보안] /kem/decrypt 취약점 잔존: 클라이언트 제공 secret_key로 shared_secret 반환 가능
+- [심각-CI] KEM_WRAP_KEY 환경변수 미주입: integration-test 잡 / docker-compose 모두 누락 → KeyError 500
+- [심각-CI] 003_kem_keys.sql CI 미적용: db-schema-test가 001/002만 실행, kem_keys 테이블 없음
+- [중간-CI] http_test.py / test_edge.py 구버전 인터페이스 그대로 → CI 실패
+
+### 테스트 공백
+- /kem/init → key_id 반환 happy path 없음
+- /kem/encrypt key_id 기반 플로우 없음 (404/503 엣지 포함)
+- /kem/keygen 410 자동화 검증 없음
+- wrap_secret/unwrap_secret 단위 테스트 없음
+
+### 수정 제안
+1. /kem/decrypt를 410으로 임시 차단
+2. CI KEM_WRAP_KEY 랜덤 키 주입 추가
+3. CI db-schema-test에 003_kem_keys.sql 추가
+4. http_test.py + test_edge.py Day 6 플로우로 교체
+
+### 결론
+CI 작업(KEM_WRAP_KEY 주입, 003_kem_keys.sql 적용, 테스트 스크립트 업데이트) 완료 및 green 확인 후 Day 7 진입 권장.

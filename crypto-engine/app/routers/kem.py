@@ -4,70 +4,88 @@ import oqs
 from fastapi import APIRouter, HTTPException
 
 from app.algorithm_factory import KEM_ALGORITHM, get_kem
+from app.db import db_cursor, wrap_secret
 from app.schemas.kem import (
     KEMDecryptRequest,
     KEMDecryptResponse,
-    KEMEncryptRequest,
-    KEMEncryptResponse,
-    KEMKeygenResponse,
+    KemEncryptRequest,
+    KemEncryptResponse,
+    KemInitResponse,
 )
 
 router = APIRouter()
 
 
-@router.post("/keygen", response_model=KEMKeygenResponse)
+@router.post("/keygen", status_code=410)
 def kem_keygen():
-    """KEM 키쌍 생성 (수신자)"""
+    """Deprecated: /kem/init 을 사용하세요."""
+    raise HTTPException(status_code=410, detail="Deprecated. Use POST /kem/init instead.")
+
+
+@router.post("/init", response_model=KemInitResponse)
+def kem_init():
+    """서버사이드 KEM 키쌍 생성 및 DB 저장.
+    secret_key는 AES-256-GCM 래핑 후 보관되며 외부에 반환되지 않는다.
+    """
     with get_kem() as kem:
         public_key = kem.generate_keypair()
         secret_key = kem.export_secret_key()
 
-    return KEMKeygenResponse(
-        algorithm=KEM_ALGORITHM,
-        public_key=base64.b64encode(public_key).decode(),
-        secret_key=base64.b64encode(secret_key).decode(),
-    )
+    wrapped, iv = wrap_secret(bytes(secret_key))
 
-
-@router.post("/encrypt", response_model=KEMEncryptResponse)
-def kem_encrypt(req: KEMEncryptRequest):
-    """수신자 공개키로 공유 비밀 캡슐화 (송신자)"""
     try:
-        public_key_bytes = base64.b64decode(req.public_key)
-    except Exception:
-        raise HTTPException(status_code=422, detail="base64 디코딩 실패")
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                """
+                INSERT INTO kem_keys (algorithm_id, public_key, wrapped_secret, wrap_iv)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (KEM_ALGORITHM, bytes(public_key), wrapped, iv),
+            )
+            key_id = cur.fetchone()[0]
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DB 오류: {exc}") from exc
+
+    return KemInitResponse(key_id=key_id, algorithm=KEM_ALGORITHM)
+
+
+@router.post("/encrypt", response_model=KemEncryptResponse)
+def kem_encrypt(req: KemEncryptRequest):
+    """DB에서 공개키 조회 후 캡슐화.
+    ciphertext만 반환. shared_secret은 서버 내부에서만 사용(Day 7에서 확장).
+    """
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "SELECT public_key FROM kem_keys WHERE id = %s",
+                (req.key_id,),
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"DB 오류: {exc}") from exc
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="key_id not found")
+
+    public_key_bytes = bytes(row[0])
 
     try:
         with get_kem() as kem:
-            if len(public_key_bytes) != kem.details["length_public_key"]:
-                raise ValueError("공개키 길이 불일치")
-            ciphertext, shared_secret = kem.encap_secret(public_key_bytes)
-    except Exception:
-        raise HTTPException(status_code=400, detail="캡슐화 오류")
+            ciphertext, _ = kem.encap_secret(public_key_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="캡슐화 오류") from exc
 
-    return KEMEncryptResponse(
+    return KemEncryptResponse(
         algorithm=KEM_ALGORITHM,
         ciphertext=base64.b64encode(ciphertext).decode(),
-        shared_secret=base64.b64encode(shared_secret).decode(),
     )
 
 
-@router.post("/decrypt", response_model=KEMDecryptResponse)
+@router.post("/decrypt", status_code=410)
 def kem_decrypt(req: KEMDecryptRequest):
-    """비밀키 + 암호문으로 공유 비밀 복원 (수신자)"""
-    try:
-        secret_key_bytes = base64.b64decode(req.secret_key)
-        ciphertext_bytes = base64.b64decode(req.ciphertext)
-    except Exception:
-        raise HTTPException(status_code=422, detail="base64 디코딩 실패")
-
-    try:
-        with oqs.KeyEncapsulation(KEM_ALGORITHM, secret_key_bytes) as kem:
-            shared_secret = kem.decap_secret(ciphertext_bytes)
-    except Exception:
-        raise HTTPException(status_code=400, detail="복호화 오류")
-
-    return KEMDecryptResponse(
-        algorithm=KEM_ALGORITHM,
-        shared_secret=base64.b64encode(shared_secret).decode(),
+    """Deprecated: 외부 secret_key 수신은 decryption oracle 취약점. Day 7 서버사이드 재설계 예정."""
+    raise HTTPException(
+        status_code=410,
+        detail="Deprecated. Server-side decryption will be added in a future release.",
     )

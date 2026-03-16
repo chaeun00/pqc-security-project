@@ -4,6 +4,9 @@ import com.pqc.gateway.dto.DsaSignRequest;
 import com.pqc.gateway.dto.DsaSignResponse;
 import com.pqc.gateway.dto.DsaVerifyRequest;
 import com.pqc.gateway.dto.DsaVerifyResponse;
+import com.pqc.gateway.dto.KemEncryptRequest;
+import com.pqc.gateway.dto.KemEncryptResponse;
+import com.pqc.gateway.dto.KemInitResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,4 +19,10 @@ public interface CryptoEngineClient {
 
     @PostMapping("/dsa/verify")
     DsaVerifyResponse verify(@RequestBody DsaVerifyRequest request);
+
+    @PostMapping("/kem/init")
+    KemInitResponse kemInit();
+
+    @PostMapping("/kem/encrypt")
+    KemEncryptResponse kemEncrypt(@RequestBody KemEncryptRequest request);
 }

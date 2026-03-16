@@ -37,6 +37,9 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
 
   # ──────────────────────────────────────────────────────────
   # api-gateway — Spring Boot (Dockerfile: Step 1-B)

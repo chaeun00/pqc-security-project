@@ -135,8 +135,31 @@ jobs:
     name: HTTP 왕복 테스트 (KEM/DSA)
     runs-on: ubuntu-latest
     needs: build-and-trivy
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pqc
+          POSTGRES_PASSWORD: pqc_test
+          POSTGRES_DB: pqc_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pqc -d pqc_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
+
+      - name: psql 클라이언트 설치 + DB 스키마 적용
+        env:
+          PGPASSWORD: pqc_test
+        run: |
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          psql -h localhost -U pqc -d pqc_db -f db/init/001_schema.sql
+          psql -h localhost -U pqc -d pqc_db -f db/init/002_vacuum_policy.sql
+          psql -h localhost -U pqc -d pqc_db -f db/init/003_kem_keys.sql
 
       - name: Docker Buildx 설정
         uses: docker/setup-buildx-action@v3
@@ -149,19 +172,26 @@ jobs:
           tags: pqc-security-project-crypto-engine:latest
           cache-from: type=gha
 
-      - name: crypto-engine 컨테이너 기동
+      # KEM_WRAP_KEY는 CI 전용 dev 키.
+      - name: crypto-engine 컨테이너 기동 (host 네트워크 — postgres 접근)
         run: |
           docker run -d --name crypto-engine \
+            --network host \
             -e KEM_ALGORITHM_ID=ML-KEM-768 \
             -e DSA_ALGORITHM_ID=ML-DSA-65 \
             -e LOG_LEVEL=INFO \
+            -e KEM_WRAP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_NAME=pqc_db \
+            -e DB_USER=pqc \
+            -e DB_PASSWORD=pqc_test \
             pqc-security-project-crypto-engine:latest
 
       - name: 헬스체크 대기 (최대 120초)
         run: |
           timeout 120 bash -c '
-            until docker exec crypto-engine /venv/bin/python -c \
-                "import urllib.request; urllib.request.urlopen('"'"'http://localhost:8000/health'"'"', timeout=5)" 2>/dev/null; do
+            until curl -sf http://localhost:8000/health > /dev/null 2>&1; do
               echo "대기 중..."
               sleep 5
             done
@@ -200,32 +230,33 @@ jobs:
       - name: psql 클라이언트 설치
         run: sudo apt-get install -y --no-install-recommends postgresql-client
 
-      - name: SQL 스키마 적용 (001_schema.sql + 002_vacuum_policy.sql)
+      - name: SQL 스키마 적용 (001 + 002 + 003)
         env:
           PGPASSWORD: pqc_test
         run: |
           psql -h localhost -U pqc -d pqc_db -f db/init/001_schema.sql
           psql -h localhost -U pqc -d pqc_db -f db/init/002_vacuum_policy.sql
+          psql -h localhost -U pqc -d pqc_db -f db/init/003_kem_keys.sql
 
-      - name: 테이블 4개 확인
+      - name: 테이블 5개 확인
         env:
           PGPASSWORD: pqc_test
         run: |
           COUNT=$(psql -h localhost -U pqc -d pqc_db -t -A -c \
             "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")
           echo "테이블 수: ${COUNT}"
-          [ "${COUNT}" -eq 4 ] || { echo "FAIL: 테이블 수 불일치 (기대=4, 실제=${COUNT})"; exit 1; }
-          echo "PASS ✓ — 테이블 4개 확인"
+          [ "${COUNT}" -eq 5 ] || { echo "FAIL: 테이블 수 불일치 (기대=5, 실제=${COUNT})"; exit 1; }
+          echo "PASS ✓ — 테이블 5개 확인"
 
-      - name: 인덱스 6개 확인 (idx_*)
+      - name: 인덱스 7개 확인 (idx_*)
         env:
           PGPASSWORD: pqc_test
         run: |
           COUNT=$(psql -h localhost -U pqc -d pqc_db -t -A -c \
             "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexname LIKE 'idx_%';")
           echo "인덱스 수: ${COUNT}"
-          [ "${COUNT}" -eq 6 ] || { echo "FAIL: 인덱스 수 불일치 (기대=6, 실제=${COUNT})"; exit 1; }
-          echo "PASS ✓ — 인덱스 6개 확인"
+          [ "${COUNT}" -eq 7 ] || { echo "FAIL: 인덱스 수 불일치 (기대=7, 실제=${COUNT})"; exit 1; }
+          echo "PASS ✓ — 인덱스 7개 확인"
 
   # ── inspect-limits (신규 — Step 1-D 커버) ──────────────────
   inspect-limits:

@@ -6,7 +6,6 @@ Step 1-B Final: 422/400 분기, 빈 message, 에러 마스킹 검증
 사용법: /venv/bin/python /tmp/test_edge.py
         (ci.yml integration-test 잡에서 docker exec 로 호출)
 """
-import base64
 import json
 import sys
 import urllib.error
@@ -41,29 +40,23 @@ def main() -> None:
     err = post_expect_error("/dsa/sign", {"message": ""}, 422)
     print(f"  PASS ✓ (422, detail: {err.get('detail', '')!r})")
 
-    # ── [2] KEM encrypt public_key 필드 누락 → 422 ────────
-    print("==> [2/5] KEM encrypt public_key 누락 → 422")
+    # ── [2] KEM encrypt key_id 필드 누락 → 422 ────────────
+    print("==> [2/5] KEM encrypt key_id 누락 → 422")
     post_expect_error("/kem/encrypt", {}, 422)
     print("  PASS ✓ (422)")
 
-    # ── [3] KEM encrypt 잘못된 base64 → 422 ───────────────
-    print("==> [3/5] KEM encrypt 잘못된 base64 → 422")
-    post_expect_error("/kem/encrypt", {"public_key": "not!!valid==base64"}, 422)
+    # ── [3] KEM encrypt key_id 타입 불일치(문자열) → 422 ───
+    print("==> [3/5] KEM encrypt key_id 타입 불일치(문자열) → 422")
+    post_expect_error("/kem/encrypt", {"key_id": "not-an-int"}, 422)
     print("  PASS ✓ (422)")
 
-    # ── [4] KEM encrypt 비호환 공개키 → 400 + 에러 마스킹 ──
-    print("==> [4/5] KEM encrypt 비호환 공개키 → 400, 에러 마스킹")
-    err = post_expect_error(
-        "/kem/encrypt",
-        {"public_key": base64.b64encode(b"wrong_key_bytes").decode()},
-        400,
-    )
+    # ── [4] KEM encrypt 존재하지 않는 key_id → 404 ─────────
+    print("==> [4/5] KEM encrypt 존재하지 않는 key_id → 404")
+    err = post_expect_error("/kem/encrypt", {"key_id": 999999}, 404)
     detail = str(err.get("detail", ""))
     assert "traceback" not in detail.lower(), \
         f"FAIL: traceback 노출 — {detail!r}"
-    assert "캡슐화 오류" in detail, \
-        f"FAIL: 에러 메시지 불일치 — {detail!r}"
-    print(f"  PASS ✓ (400, masked: {detail!r})")
+    print(f"  PASS ✓ (404, masked: {detail!r})")
 
     # ── [5] DSA sign 65537자 message → 422 (DoS 제한) ──
     print("==> [5/5] DSA sign 65537자 message → 422 (max_length=65536 제한)")
