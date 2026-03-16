@@ -1928,3 +1928,42 @@ Day 6 리뷰 심각 3건(decryption oracle 잔존, KEM_WRAP_KEY CI 미주입, 00
 1. POST /kem/decrypt → 410 Gone
 2. CI integration-test: /kem/init + /kem/encrypt 왕복 exit 0
 3. CI db-schema-test: 테이블 5개 + 인덱스 7개 확인 통과
+
+---
+## [2026-03-17] Day 7 세부 계획 확정판 — decryption oracle 수정 + /api/encrypt 전 구간
+
+### 현재 흐름 (불완전):
+client → POST /api/kem/init       → key_id             ✅ Day 6 완료
+client → POST /api/kem/encrypt    → kem_ciphertext만   ⚠️ plaintext 암호화 없음
+client → POST /api/kem/decrypt    → 410                ⚠️ Day 6 임시 차단
+client → POST /api/encrypt        → 미구현              ❌ AC1 미달
+
+### Day 7 목표 흐름:
+client → POST /api/encrypt {plaintext}
+  → api-gw Feign: /kem/init → key_id
+  → api-gw Feign: /kem/encrypt {key_id, plaintext}
+  → crypto-engine: KEM encap → AES-256-GCM(plaintext) → CBOM INSERT
+  → return {key_id, kem_ciphertext, aes_ciphertext, aes_iv}
+
+client → POST /api/kem/decrypt {key_id, kem_ciphertext, aes_ciphertext, aes_iv}
+  → api-gw Feign: /kem/decrypt
+  → crypto-engine: DB unwrap → decap → AES decrypt → CBOM INSERT
+  → return {plaintext}
+
+### 목표
+/kem/encrypt 하이브리드 확장 + /kem/decrypt 서버사이드 구현 + CBOM 자동 로깅 + /api/encrypt 전 구간 완성
+
+### 질문 (Questions)
+1. /kem/encrypt Breaking Change 수용 여부: Day 6에서 {key_id} → {ciphertext} 인터페이스를 {key_id, plaintext} → {kem_ciphertext, aes_ciphertext, aes_iv}로 변경하면 http_test.py:74-78 + test_edge.py:44-60 재수정이 불가피합니다. 하나의 엔드포인트로 통합(breaking change 감수)할지, /kem/wrap 신규 엔드포인트로 분리하여 /kem/encrypt는 Day 6 그대로 유지할지?
+2. CBOM 로깅 실패 정책: cbom_assets INSERT 실패 시 암호화 요청을 500으로 차단할지(transactional), 로그만 남기고 암호화 응답은 정상 반환할지(fire-and-forget)? — [관건 2] VACUUM 정책 실부하 검증 목적상 로깅 누락 허용 범위 결정 필요
+3. AES 키 도출 방식: ML-KEM-768의 shared_secret은 32바이트로 AES-256 키 크기와 일치합니다. 직접 AES 키로 사용할지, HKDF(RFC 5869)로 도출하여 키 도출 단계를 명시적으로 분리할지? (포트폴리오 관점: HKDF 명시가 암호 민첩성과 연결됨)
+
+### 범위
+- Step 1: crypto-engine /kem/encrypt 확장(KEM+AES-256-GCM) + /kem/decrypt 서버사이드(unwrap→decap→AES decrypt)
+- Step 2: CBOM 자동 로깅 (encrypt/decrypt 이벤트 → cbom_assets INSERT, fire-and-forget)
+- Step 3: api-gateway EncryptController + KemController 확장 + Feign 메서드 추가 + 테스트 스크립트 재수정
+
+### 인수조건
+1. POST /api/encrypt → {key_id, kem_ciphertext, aes_ciphertext, aes_iv} + cbom_assets 1건
+2. POST /api/kem/decrypt → {plaintext} 원문 일치 + cbom_assets 1건
+3. CI integration-test: encrypt→decrypt 왕복 + plaintext 일치 자동 검증 통과 (Phase 2 AC1)
