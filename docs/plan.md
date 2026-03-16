@@ -1953,10 +1953,10 @@ client → POST /api/kem/decrypt {key_id, kem_ciphertext, aes_ciphertext, aes_iv
 ### 목표
 /kem/encrypt 하이브리드 확장 + /kem/decrypt 서버사이드 구현 + CBOM 자동 로깅 + /api/encrypt 전 구간 완성
 
-### 질문 (Questions)
-1. /kem/encrypt Breaking Change 수용 여부: Day 6에서 {key_id} → {ciphertext} 인터페이스를 {key_id, plaintext} → {kem_ciphertext, aes_ciphertext, aes_iv}로 변경하면 http_test.py:74-78 + test_edge.py:44-60 재수정이 불가피합니다. 하나의 엔드포인트로 통합(breaking change 감수)할지, /kem/wrap 신규 엔드포인트로 분리하여 /kem/encrypt는 Day 6 그대로 유지할지?
-2. CBOM 로깅 실패 정책: cbom_assets INSERT 실패 시 암호화 요청을 500으로 차단할지(transactional), 로그만 남기고 암호화 응답은 정상 반환할지(fire-and-forget)? — [관건 2] VACUUM 정책 실부하 검증 목적상 로깅 누락 허용 범위 결정 필요
-3. AES 키 도출 방식: ML-KEM-768의 shared_secret은 32바이트로 AES-256 키 크기와 일치합니다. 직접 AES 키로 사용할지, HKDF(RFC 5869)로 도출하여 키 도출 단계를 명시적으로 분리할지? (포트폴리오 관점: HKDF 명시가 암호 민첩성과 연결됨)
+### 질문에 대한 답
+1. Q1. /kem/encrypt Breaking Change 수용 여부 -> 하나의 엔드포인트로 통합 (Breaking Change 감수). 프로젝트 초기 단계에서 기능이 유사한 /kem/wrap과 /kem/encrypt를 분리하는 것은 향후 유지보수 비용과 API 복잡도만 높이는 결과가 됩니다.
+2. CBOM 로깅 실패 정책 -> Transactional (로깅 실패 시 500 에러). 현재 목적이 **'VACUUM 정책 실부하 검증'**이라면, 로깅 누락은 실험 데이터의 오염을 의미합니다. 데이터가 빠진 상태에서의 테스트는 결과의 신뢰성을 떨어뜨립니다.
+3. AES 키 도출 방식 -> HKDF (RFC 5869) 명시적 사용. 단순히 32바이트가 일치한다고 그대로 사용하는 것은 'KDF(Key Derivation Function)'의 설계 목적을 간과하는 것입니다. "Shared Secret을 직접 사용하지 않고 HKDF를 통해 도출했다"는 설명은 암호 민첩성(Crypto Agility)과 도메인 분리(Domain Separation) 개념을 정확히 이해하고 있음을 증명합니다. salt나 info 파라미터를 활용해 향후 다른 알고리즘으로 변경되더라도 동일한 프레임워크를 유지할 수 있는 구조를 만드세요.
 
 ### 범위
 - Step 1: crypto-engine /kem/encrypt 확장(KEM+AES-256-GCM) + /kem/decrypt 서버사이드(unwrap→decap→AES decrypt)
