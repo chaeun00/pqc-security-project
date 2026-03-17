@@ -2026,3 +2026,41 @@ client → POST /api/kem/decrypt {key_id, kem_ciphertext, aes_ciphertext, aes_iv
 1. liboqs 버전 쌍 일치 + docker build + pytest PASS
 2. kem_encrypt HTTPException이 db_cursor 외부에 위치
 3. CI ENCRYPT_RESP JSON 파싱 오류 없음
+
+---
+## [2026-03-17] Day 8 세부 계획 — Algorithm Agility 인터페이스
+
+### 목표
+KEM_ALGORITHM_ID / DSA_ALGORITHM_ID 환경변수 교체만으로 재빌드 없이 알고리즘 전환 가능한 AlgorithmStrategy 구현 + CBOM 전환 이벤트 기록 → Phase 2 인수조건 3 달성
+
+### 선행 조건 (Step 0)
+- liboqs-python ↔ liboqs C 버전 동기화 완료 후 진입 (Day 7 후속 HIGH)
+  - 0.15.0 PyPI 배포 여부 확인 → requirements 또는 Dockerfile 수정
+  - docker build + pytest PASS 확인
+
+### 질문에 대한 답
+1. AlgorithmStrategy는 crypto-engine(Python) 단일 구현으로 충분한지, 아니면 api-gateway(Java)에도 알고리즘 식별자를 전달하는 계층이 필요한지? -> 두 계층 모두 필요.  API Gateway (Java) - 알고리즘 '식별 및 정책 제어' 계층. Crypto-Engine (Python) - 알고리즘 '실행 및 연산' 계층.
+2. CBOM 기록 시점 및 방식 -> 하이브리드(Hybrid) 방식. 모든 API 호출마다 DB나 중앙 저장소의 cbom_assets를 업데이트하는 것은 성능 저하(I/O Overhead)의 주범.
+Startup (1회): 컨테이너가 뜰 때 해당 환경에서 사용 가능한(Capable) 알고리즘 리스트와 기본 설정을 기록 (Static CBOM).
+Runtime (이벤트 발생 시): 알고리즘 설정이 변경되거나, 특정 주기로 실제 사용된 알고리즘 통계를 기록.
+API 호출 시: cbom_assets 테이블에 직접 쓰기보다는, 애플리케이션 로그(ELK/Splunk 등)에 알고리즘 식별자를 남김. 추후 이 로그를 수집하여 '실제 활성 CBOM' 리포트를 생성하는 것이 시스템 부하를 줄임.
+3. 알고리즘 범위 및 확장성 (RiskClassifier 연동) -> 확장 가능한 구조(Crypto-Agility)는 필수. 현재 NIST 표준인 ML-KEM/ML-DSA를 고정값으로 두는 것은 위험. PQC 분야는 표준화가 진행 중이며, 향후 취약점이 발견될 경우 신속히 교체해야 하기 때문. 알고리즘 타입을 Enum이나 데이터베이스로 관리. AlgorithmRegistry 같은 컴포넌트를 두어 알고리즘명, 보안 강도(Level 1, 3, 5), 라이브러리 경로 등을 관리.
+
+추후 RiskClassifier가 "현재 ML-KEM-512는 위험함"이라는 신호를 주면, 시스템이 실시간으로 이를 차단하거나 상위 버전으로 Fallback 시킬 수 있는 토대를 마련해야 합니다.
+
+### 범위
+- Step 1: AlgorithmStrategy 인터페이스 (crypto-engine)
+  - algorithm_strategy.py 신규: 환경변수 로드 + 화이트리스트 검증
+  - kem_service.py / dsa_service.py 하드코딩 → strategy 주입
+  - api-gateway application.yml / .env.example 키 추가
+- Step 2: CBOM 전환 이벤트 기록
+  - startup 시 cbom_assets에 algorithm_transition 이벤트 INSERT
+  - risk_level 하드코딩 제거 구조 준비
+- Step 3: CI 검증
+  - ML-KEM-512 / ML-KEM-1024 환경변수 치환 → 재빌드 없이 /api/encrypt 정상 확인
+  - INVALID-ALG 주입 → startup 오류(exit code ≠ 0) 확인
+
+### 인수조건
+1. 환경변수만 변경 + docker compose up → 알고리즘 전환 + API 정상 동작
+2. 서버 기동 시 cbom_assets에 전환 이벤트 INSERT 확인
+3. 화이트리스트 외 알고리즘 ID → startup 단계 명시적 오류 발생
