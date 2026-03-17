@@ -206,6 +206,56 @@ jobs:
           docker exec crypto-engine /venv/bin/python /tmp/test_edge.py
           docker exec --user root crypto-engine rm -f /tmp/http_test.py /tmp/test_edge.py 2>/dev/null || true
 
+      - name: "[Day7-AC2] /kem/decrypt 엣지케이스 — aes_iv 변조 → 400 (Oracle 방어)"
+        run: |
+          INIT=$(curl -sf -X POST http://localhost:8000/kem/init -H "Content-Type: application/json" -d '{}')
+          KEY_ID=$(echo "$INIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+          PLAINTEXT=$(python3 -c "import base64; print(base64.b64encode(b'edge-test').decode())")
+          ENC=$(curl -sf -X POST http://localhost:8000/kem/encrypt \
+            -H "Content-Type: application/json" \
+            -d "{\"key_id\":$KEY_ID,\"plaintext\":\"$PLAINTEXT\"}")
+          python3 -c "
+          import sys, json, urllib.request, urllib.error
+          enc = json.loads('$ENC')
+          body = json.dumps({
+              'key_id': enc['key_id'],
+              'kem_ciphertext': enc['kem_ciphertext'],
+              'aes_ciphertext': enc['aes_ciphertext'],
+              'aes_iv': 'AAAAAAAAAAAAAAAA',
+          }).encode()
+          req = urllib.request.Request('http://localhost:8000/kem/decrypt', data=body,
+              headers={'Content-Type':'application/json'}, method='POST')
+          try:
+              urllib.request.urlopen(req, timeout=10)
+              print('FAIL: 200 반환')
+              exit(1)
+          except urllib.error.HTTPError as e:
+              r = json.loads(e.read())
+              assert e.code == 400 and r.get('detail') == '복호화 오류', \
+                  f'FAIL: code={e.code} detail={r.get(\"detail\")}'
+              print(f'PASS ✓ — {e.code} + 복호화 오류 (Oracle 방어 확인)')
+          "
+
+      - name: "[Day7-AC2] /kem/decrypt 엣지케이스 — 존재하지 않는 key_id → 404"
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/kem/decrypt \
+            -H "Content-Type: application/json" \
+            -d '{"key_id":999999,"kem_ciphertext":"AAAA","aes_ciphertext":"AAAA","aes_iv":"AAAA"}')
+          [ "$CODE" = "404" ] \
+            && echo "PASS ✓ — 존재하지 않는 key_id → 404" \
+            || { echo "FAIL — 예상 404, 실제 $CODE"; exit 1; }
+
+      - name: "[Day7-AC2] /kem/decrypt 입력 검증 — 잘못된 base64 → 400"
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/kem/decrypt \
+            -H "Content-Type: application/json" \
+            -d '{"key_id":1,"kem_ciphertext":"!!!","aes_ciphertext":"!!!","aes_iv":"!!!"}')
+          [ "$CODE" = "400" ] \
+            && echo "PASS ✓ — 잘못된 base64 → 400" \
+            || { echo "FAIL — 예상 400, 실제 $CODE"; exit 1; }
+
   # ── db-schema-test (신규 — Step 1-C 커버) ─────────────────
   db-schema-test:
     name: DB 스키마 검증 (테이블 + 인덱스)
@@ -651,3 +701,48 @@ jobs:
           [ "$CODE" = "401" ] \
             && echo "PASS ✓ — 미인증 → /dsa/sign 401" \
             || { echo "FAIL — 응답코드: $CODE (401 예상)"; exit 1; }
+
+      - name: "[Day7-AC1] POST /api/encrypt → {key_id, kem_ciphertext, aes_ciphertext, aes_iv}"
+        run: |
+          PLAINTEXT_B64=$(python3 -c "import base64; print(base64.b64encode(b'Day7-E2E-Test').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"plaintext\":\"${PLAINTEXT_B64}\"}")
+          echo "$RESP" | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          assert 'key_id' in r, f'FAIL: key_id 없음 — {r}'
+          assert 'kem_ciphertext' in r, f'FAIL: kem_ciphertext 없음 — {r}'
+          assert 'aes_ciphertext' in r, f'FAIL: aes_ciphertext 없음 — {r}'
+          assert 'aes_iv' in r, f'FAIL: aes_iv 없음 — {r}'
+          print('PASS ✓ — /api/encrypt 4개 필드 확인')
+          import json as _j; print(json.dumps(r))
+          " || exit 1
+          echo "ENCRYPT_RESP=$(echo "$RESP" | jq -c '.')" >> $GITHUB_ENV
+
+      - name: "[Day7-AC2] POST /kem/decrypt → plaintext 원문 일치"
+        run: |
+          PLAINTEXT_B64=$(python3 -c "import base64; print(base64.b64encode(b'Day7-E2E-Test').decode())")
+          python3 -c "
+          import os, json, urllib.request, base64
+          enc = json.loads(os.environ['ENCRYPT_RESP'])
+          body = json.dumps({
+              'key_id': enc['key_id'],
+              'kem_ciphertext': enc['kem_ciphertext'],
+              'aes_ciphertext': enc['aes_ciphertext'],
+              'aes_iv': enc['aes_iv'],
+          }).encode()
+          token = os.environ['TOKEN']
+          req = urllib.request.Request(
+              'http://localhost:8080/kem/decrypt',
+              data=body,
+              headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'},
+              method='POST',
+          )
+          r = json.loads(urllib.request.urlopen(req, timeout=10).read())
+          assert 'plaintext' in r, f'FAIL: plaintext 없음 — {r}'
+          decoded = base64.b64decode(r['plaintext'])
+          assert decoded == b'Day7-E2E-Test', f'FAIL: plaintext 불일치 — {decoded}'
+          print('PASS ✓ — /kem/decrypt plaintext 원문 일치')
+          "

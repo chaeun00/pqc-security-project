@@ -1967,3 +1967,62 @@ client → POST /api/kem/decrypt {key_id, kem_ciphertext, aes_ciphertext, aes_iv
 1. POST /api/encrypt → {key_id, kem_ciphertext, aes_ciphertext, aes_iv} + cbom_assets 1건
 2. POST /api/kem/decrypt → {plaintext} 원문 일치 + cbom_assets 1건
 3. CI integration-test: encrypt→decrypt 왕복 + plaintext 일치 자동 검증 통과 (Phase 2 AC1)
+
+---
+
+## [2026-03-17] Day 7 후속 구현 계획 — Oracle 방어 + oqs 안정화 + 테스트 보강
+
+**목표:** decryption oracle 취약점 제거 + oqs 버전 불안정성 해소 + /api/encrypt 전 구간 테스트 공백 보강
+
+### 사전 확인 필요
+- oqs.KeyEncapsulation keyword args 변경 대상이 crypto-engine 내 몇 개 파일에 걸쳐 있는지 확인이 필요 — kem_service.py 단일 파일인지, decrypt_service.py 등 분리되어 있는지?
+- db_cursor() 내 HTTPException 이동 시, 현재 코드의 트랜잭션 롤백 정책(커밋 여부)에 영향을 주지 않음을 확인했는가?
+
+### 질문에 대한 답
+- 먼저 EncryptControllerTest에서 Mock을 사용해 API 규격을 빠르게 확정. 그 후, PQC 엔진과의 연동이 중요한 만큼 별도의 통합 테스트를 작성하여 실제 암호화 값이 예상대로 돌아오는지(예: 특정 접두사 확인, 복호화 가능 여부 등)를 검증
+
+### Step 1 — oqs 버전 고정 + keyword args
+- requirements/base.txt liboqs-python 버전 핀 고정
+- oqs.KeyEncapsulation positional → keyword args 변경
+
+### Step 2 — Decryption Oracle 방어
+- KEM 실패 / AES 실패 단일 에러 메시지 통일
+- db_cursor() 블록 외부로 HTTPException 이동
+
+### Step 3 — 테스트 공백 보강
+- EncryptControllerTest.java 신규 작성 (Mock 유닛)
+- crypto-engine/tests/ pytest 생성 (_derive_aes_key, _cbom_insert)
+- CI 엣지케이스 스텝 추가 (aes_iv 오류, key_id 404, unwrap 실패)
+
+**인수조건:**
+1. liboqs-python 버전 고정 + keyword args CI 재현 가능
+2. /kem/decrypt KEM/AES 실패 시 동일 메시지 반환
+3. EncryptControllerTest + crypto-engine pytest PASS
+
+---
+
+## [2026-03-17] Day 7 후속 구현 계획 — liboqs 버전 동기화 + kem_encrypt 패턴 정리
+
+**목표:** liboqs-python ↔ liboqs C 버전 불일치 해소 + kem_encrypt 코드 패턴 일관성 확보
+
+### 사전 확인 필요:
+1. Dockerfile에서 liboqs C를 소스 빌드하는 방식인지, 아니면 apt/pip 등으로 설치하는 방식인지? — 동기화 방향(C 버전을 내리거나 python 버전을 올리거나)이 달라짐.
+2. liboqs-python 0.15.0이 PyPI에 배포되어 있다면 python 버전을 올리는 방향이 자연스럽지만, 미배포 상태라면 Dockerfile C 버전을 0.14.x로 내려야 함 — 현재 PyPI 배포 여부를 확인.
+3. kem_encrypt의 db_cursor() 블록 범위가 kem_decrypt와 동일한 구조인지, 아니면 트랜잭션 단위가 다른지?
+
+### Step 1 — [HIGH] liboqs 버전 동기화
+- PyPI liboqs-python 0.15.0 배포 여부 확인 후 방향 결정
+  - 배포됨: requirements/base.txt 0.15.0 업데이트
+  - 미배포: Dockerfile liboqs C 버전 다운그레이드
+
+### Step 2 — [MEDIUM] kem_encrypt HTTPException 패턴 분리
+- db_cursor() 블록 외부로 HTTPException 이동
+- kem_decrypt와 동일한 3단계 분리 구조 적용
+
+### Step 3 — [LOW] CI ENCRYPT_RESP JSON 환경변수 개선
+- jq -c 단일라인 압축 또는 toJSON 헬퍼 사용
+
+**인수조건:**
+1. liboqs 버전 쌍 일치 + docker build + pytest PASS
+2. kem_encrypt HTTPException이 db_cursor 외부에 위치
+3. CI ENCRYPT_RESP JSON 파싱 오류 없음

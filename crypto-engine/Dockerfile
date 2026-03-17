@@ -1,11 +1,12 @@
 # ==============================================================
-# crypto-engine — Multi-stage Dockerfile (Step 1-B rev.16)
+# crypto-engine — Multi-stage Dockerfile (Step 1-B rev.17)
 # Stage 1 (builder): python:3.12-alpine + liboqs cmake build
 # Stage 2 (runtime): python:3.12-alpine + liboqs.so COPY
 # rev.13: bookworm → alpine (CVE-2025-7458 / CVE-2023-45853 제거)
 #   sqlite-libs 3.51.2 / zlib 1.3.1 → 두 CRITICAL CVE 패치됨
 #   cmake install prefix /usr → musl 기본 탐색 경로, ldconfig 불필요
 # rev.16: OQS_INSTALL_PATH=/usr 추가 → oqs.py _load_liboqs() 정상 탐색
+# rev.17: liboqs C 0.15.0 → 0.14.0 (liboqs-python 0.14.1 PyPI 버전 동기화)
 # ==============================================================
 
 # ── Stage 1: builder ──────────────────────────────────────
@@ -20,7 +21,7 @@ RUN apk add --no-cache \
 
 # liboqs C 라이브러리 빌드 및 설치
 # --prefix /usr: musl은 /usr/lib을 기본 탐색 → ldconfig 불필요
-RUN git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs /liboqs \
+RUN git clone --depth 1 --branch 0.14.0 https://github.com/open-quantum-safe/liboqs /liboqs \
     && cmake -S /liboqs -B /liboqs/build \
         -DBUILD_SHARED_LIBS=ON \
         -DOQS_BUILD_ONLY_LIB=ON \

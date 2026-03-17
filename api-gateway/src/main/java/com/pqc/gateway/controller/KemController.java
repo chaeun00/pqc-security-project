@@ -1,6 +1,8 @@
 package com.pqc.gateway.controller;
 
 import com.pqc.gateway.client.CryptoEngineClient;
+import com.pqc.gateway.dto.KemDecryptRequest;
+import com.pqc.gateway.dto.KemDecryptResponse;
 import com.pqc.gateway.dto.KemEncryptRequest;
 import com.pqc.gateway.dto.KemEncryptResponse;
 import com.pqc.gateway.dto.KemInitResponse;
@@ -29,5 +31,10 @@ public class KemController {
     @PostMapping("/encrypt")
     public ResponseEntity<KemEncryptResponse> encrypt(@Valid @RequestBody KemEncryptRequest request) {
         return ResponseEntity.ok(cryptoEngineClient.kemEncrypt(request));
+    }
+
+    @PostMapping("/decrypt")
+    public ResponseEntity<KemDecryptResponse> decrypt(@Valid @RequestBody KemDecryptRequest request) {
+        return ResponseEntity.ok(cryptoEngineClient.kemDecrypt(request));
     }
 }

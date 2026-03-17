@@ -4,6 +4,6 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.6.0
 python-dotenv>=1.0.0
-liboqs-python   # liboqs-python wrapper (ML-KEM / ML-DSA)
+liboqs-python==0.14.1   # liboqs-python wrapper (ML-KEM / ML-DSA) — 버전 고정 (Day 7)
 psycopg2-binary # PostgreSQL 드라이버 (Day 6: KEM 키 DB 저장)
 cryptography    # AES-256-GCM secret_key 래핑 (Day 6)
