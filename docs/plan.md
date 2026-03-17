@@ -2028,6 +2028,38 @@ client → POST /api/kem/decrypt {key_id, kem_ciphertext, aes_ciphertext, aes_iv
 3. CI ENCRYPT_RESP JSON 파싱 오류 없음
 
 ---
+
+## Day 8 — CI 오류 수정 계획 (2026-03-17)
+
+### 질문에 대한 답
+1. config/crypto-engine.env.example에 KEM_WRAP_KEY 플레이스홀더(changeme 등)를 추가하는 것이 적절한가? 아니면 CI job 스텝에서만 주입하는 방식이 맞는가? (보안 정책 확인) -> .env.example에 플레이스홀더를 포함. 어떤 환경변수가 필요한지 명시하는 가이드.
+2. test_edge.py [4/5]의 의도가 "key_id 없음 → 404"라면, valid한 base64 plaintext를 같이 전송하는 것으로 확정해도 되는가? -> valid한 base64 plaintext를 전송하는 것으로 확정하는 것이 적절.
+3. DB_HOST=db(compose 서비스명)를 crypto-engine.env.example에 기본값으로 넣는 것이 개발자 UX상 적합한가? -> 적합.
+
+### 오류 1: test_edge.py [4/5] 422 vs 404
+- 수정: scripts/test_edge.py:55 — {"key_id":999999} → {"key_id":999999,"plaintext":"dGVzdA=="}
+
+### 오류 2: stack-integration-test /api/encrypt exit 22
+- 수정 A: config/crypto-engine.env.example — DB 변수 + KEM_WRAP_KEY 플레이스홀더 추가
+- 수정 B: ci.yml stack-integration-test 스텝 — KEM_WRAP_KEY 및 DB_PASSWORD CI 주입 추가
+
+### 잠재적 위험
+- inspect-limits / compose-integration 잡도 crypto-engine.env.example 복사만 하고 KEM_WRAP_KEY 주입이 없음. 해당 잡들이 KEM 연산을 테스트하지 않는다면 무관하나, 암호화 API 호출 시 같은 오류 재현 가능 — Day 8 범위 외이므로 별도 확인 필요.
+
+---
+
+## Day 8 — CI 오류 3 수정 계획 (2026-03-17)
+
+### 질문에 대한 답
+1. /kem/encrypt 응답에 key_id를 추가하는 API 변경을 원하는가? 아니면 CI 스크립트만 수정하는가? (API 변경은 breaking change 여부 검토 필요) -> CI 스크립트만 수정
+2. 이 스텝의 수정 범위를 "CI yml 1줄 수정"으로 한정할 것인가? -> 1줄 수정으로 한정
+
+### [Day7-AC2] aes_iv 변조 테스트 KeyError: 'key_id'
+- 원인: ci.yml:221 에서 enc['key_id'] 접근 — KemEncryptResponse에 key_id 없음
+- 수정: 'key_id': enc['key_id'] → 'key_id': $KEY_ID (셸 변수 치환)
+
+---
+
 ## [2026-03-17] Day 8 세부 계획 — Algorithm Agility 인터페이스
 
 ### 목표

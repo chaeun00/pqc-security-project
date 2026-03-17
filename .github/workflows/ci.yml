@@ -218,7 +218,7 @@ jobs:
           import sys, json, urllib.request, urllib.error
           enc = json.loads('$ENC')
           body = json.dumps({
-              'key_id': enc['key_id'],
+              'key_id': $KEY_ID,
               'kem_ciphertext': enc['kem_ciphertext'],
               'aes_ciphertext': enc['aes_ciphertext'],
               'aes_iv': 'AAAAAAAAAAAAAAAA',
@@ -650,6 +650,8 @@ jobs:
           cp .env.example .env
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
           cp config/crypto-engine.env.example config/crypto-engine.env
+          sed -i 's/^KEM_WRAP_KEY=.*/KEM_WRAP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/' config/crypto-engine.env
+          sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=pqc_test/' config/crypto-engine.env
           cp config/api-gateway.env.example config/api-gateway.env
           cp config/dashboard.env.example config/dashboard.env
           echo "DEMO_USER=demo" >> config/api-gateway.env

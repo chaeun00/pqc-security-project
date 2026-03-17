@@ -52,7 +52,7 @@ def main() -> None:
 
     # ── [4] KEM encrypt 존재하지 않는 key_id → 404 ─────────
     print("==> [4/5] KEM encrypt 존재하지 않는 key_id → 404")
-    err = post_expect_error("/kem/encrypt", {"key_id": 999999}, 404)
+    err = post_expect_error("/kem/encrypt", {"key_id": 999999, "plaintext": "dGVzdA=="}, 404)
     detail = str(err.get("detail", ""))
     assert "traceback" not in detail.lower(), \
         f"FAIL: traceback 노출 — {detail!r}"
