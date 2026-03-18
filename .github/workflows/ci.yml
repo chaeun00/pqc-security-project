@@ -887,38 +887,55 @@ jobs:
           "
 
       - name: "[Day8-AC1] /kem/encrypt 헤더 불일치 → 400 확인"
+        # pqc-internal 네트워크는 internal:true → 호스트에서 포트 바인딩 불가
+        # crypto-engine 컨테이너 내부에서 직접 HTTP 요청으로 대체
         run: |
-          # ML-KEM-512 key_id에 ML-KEM-768 헤더 → 400
-          INIT=$(curl -sf -X POST http://localhost:8000/kem/init \
-            -H "Content-Type: application/json" \
-            -H "X-Kem-Algorithm-Id: ML-KEM-512" \
-            -d '{}')
-          KEY_ID=$(echo "$INIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
-          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'mismatch-test').decode())")
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST http://localhost:8000/kem/encrypt \
-            -H "Content-Type: application/json" \
-            -H "X-Kem-Algorithm-Id: ML-KEM-768" \
-            -d "{\"key_id\":$KEY_ID,\"plaintext\":\"$PLAIN\"}")
-          [ "$CODE" = "400" ] \
-            && echo "PASS ✓ — 헤더 알고리즘 불일치 → 400" \
-            || { echo "FAIL — 예상 400, 실제 $CODE"; exit 1; }
+          docker compose exec -T crypto-engine python3 -c "
+          import urllib.request, urllib.error, json, base64
+          # ML-KEM-512 key_id 생성
+          req = urllib.request.Request('http://localhost:8000/kem/init',
+              data=b'{}',
+              headers={'Content-Type': 'application/json', 'X-Kem-Algorithm-Id': 'ML-KEM-512'},
+              method='POST')
+          init = json.loads(urllib.request.urlopen(req, timeout=10).read())
+          key_id = init['key_id']
+          # ML-KEM-768 헤더로 encrypt 시도 → 400 기대
+          plain = base64.b64encode(b'mismatch-test').decode()
+          body = json.dumps({'key_id': key_id, 'plaintext': plain}).encode()
+          req2 = urllib.request.Request('http://localhost:8000/kem/encrypt',
+              data=body,
+              headers={'Content-Type': 'application/json', 'X-Kem-Algorithm-Id': 'ML-KEM-768'},
+              method='POST')
+          try:
+              urllib.request.urlopen(req2, timeout=10)
+              print('FAIL: expected 400 but got 200')
+              exit(1)
+          except urllib.error.HTTPError as e:
+              assert e.code == 400, f'FAIL: expected 400, got {e.code}'
+              print('PASS: header mismatch -> 400')
+          "
 
       - name: "[Day8-AC1] /kem/encrypt 헤더 없음 → DB algorithm_id 기반 200"
+        # pqc-internal 네트워크는 internal:true → 호스트에서 포트 바인딩 불가
+        # crypto-engine 컨테이너 내부에서 직접 HTTP 요청으로 대체
         run: |
-          # ML-KEM-512 key_id + 헤더 없음 → stored_algorithm(ML-KEM-512)으로 encap → 200
-          INIT=$(curl -sf -X POST http://localhost:8000/kem/init \
-            -H "Content-Type: application/json" \
-            -H "X-Kem-Algorithm-Id: ML-KEM-512" \
-            -d '{}')
-          KEY_ID=$(echo "$INIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
-          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'no-header-test').decode())")
-          RESP=$(curl -sf -X POST http://localhost:8000/kem/encrypt \
-            -H "Content-Type: application/json" \
-            -d "{\"key_id\":$KEY_ID,\"plaintext\":\"$PLAIN\"}")
-          python3 -c "
-          import json
-          r = json.loads('$RESP')
+          docker compose exec -T crypto-engine python3 -c "
+          import urllib.request, json, base64
+          # ML-KEM-512 key_id 생성
+          req = urllib.request.Request('http://localhost:8000/kem/init',
+              data=b'{}',
+              headers={'Content-Type': 'application/json', 'X-Kem-Algorithm-Id': 'ML-KEM-512'},
+              method='POST')
+          init = json.loads(urllib.request.urlopen(req, timeout=10).read())
+          key_id = init['key_id']
+          # 헤더 없이 encrypt → stored_algorithm(ML-KEM-512) 기반 200 기대
+          plain = base64.b64encode(b'no-header-test').decode()
+          body = json.dumps({'key_id': key_id, 'plaintext': plain}).encode()
+          req2 = urllib.request.Request('http://localhost:8000/kem/encrypt',
+              data=body,
+              headers={'Content-Type': 'application/json'},
+              method='POST')
+          r = json.loads(urllib.request.urlopen(req2, timeout=10).read())
           assert r['algorithm'] == 'ML-KEM-512', f'FAIL: algorithm={r[\"algorithm\"]}'
-          print('PASS ✓ — 헤더 없음 → DB algorithm_id(ML-KEM-512) 기반 encap 200')
-          " || exit 1
+          print('PASS: no-header -> DB algorithm_id(ML-KEM-512) 200')
+          "
