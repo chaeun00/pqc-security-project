@@ -1,14 +1,16 @@
 import base64
 import json
 import os
+from typing import Optional
 
 import oqs
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
-from app.algorithm_factory import KEM_ALGORITHM, get_kem
+from app.algorithm_factory import KEM_ALGORITHM
+from app.algorithm_strategy import KEM_WHITELIST, validate_algorithm
 from app.db import db_cursor, unwrap_secret, wrap_secret
 from app.schemas.kem import (
     KEMDecryptRequest,
@@ -19,6 +21,23 @@ from app.schemas.kem import (
 )
 
 router = APIRouter()
+
+
+def _resolve_kem_algorithm(header_value: Optional[str]) -> str:
+    """X-Kem-Algorithm-Id 헤더 → 화이트리스트 검증 후 알고리즘 ID 반환.
+    헤더 없으면 서버 기본값(KEM_ALGORITHM) 사용.
+    헤더에 허용되지 않은 값 → 400 (startup fail-fast와 달리 요청 거부).
+    """
+    if not header_value:
+        return KEM_ALGORITHM
+    normalized = header_value.strip().upper()
+    if normalized not in KEM_WHITELIST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"X-Kem-Algorithm-Id='{header_value}' is not allowed. "
+                   f"Supported: {list(KEM_WHITELIST.keys())}",
+        )
+    return normalized
 
 
 def _derive_aes_key(shared_secret: bytes) -> bytes:
@@ -52,11 +71,14 @@ def kem_keygen():
 
 
 @router.post("/init", response_model=KemInitResponse)
-def kem_init():
+def kem_init(x_kem_algorithm_id: Optional[str] = Header(default=None)):
     """서버사이드 KEM 키쌍 생성 및 DB 저장.
+    X-Kem-Algorithm-Id 헤더로 per-request 알고리즘 선택 가능 (기본: 서버 환경변수).
     secret_key는 AES-256-GCM 래핑 후 보관되며 외부에 반환되지 않는다.
     """
-    with get_kem() as kem:
+    algorithm = _resolve_kem_algorithm(x_kem_algorithm_id)
+
+    with oqs.KeyEncapsulation(algorithm) as kem:
         public_key = kem.generate_keypair()
         secret_key = kem.export_secret_key()
 
@@ -70,18 +92,20 @@ def kem_init():
                 VALUES (%s, %s, %s, %s)
                 RETURNING id
                 """,
-                (KEM_ALGORITHM, bytes(public_key), wrapped, iv),
+                (algorithm, bytes(public_key), wrapped, iv),
             )
             key_id = cur.fetchone()[0]
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"DB 오류: {exc}") from exc
 
-    return KemInitResponse(key_id=key_id, algorithm=KEM_ALGORITHM)
+    return KemInitResponse(key_id=key_id, algorithm=algorithm)
 
 
 @router.post("/encrypt", response_model=KemEncryptResponse)
-def kem_encrypt(req: KemEncryptRequest):
+def kem_encrypt(req: KemEncryptRequest, x_kem_algorithm_id: Optional[str] = Header(default=None)):
     """하이브리드 암호화: DB 공개키 조회 → KEM encap → HKDF → AES-256-GCM(plaintext).
+    알고리즘은 DB의 key algorithm_id 기준 (kem_decrypt와 대칭).
+    X-Kem-Algorithm-Id 헤더가 있고 DB algorithm_id와 불일치하면 400 반환.
     CBOM 로깅 포함 (Transactional — 로깅 실패 시 503).
     DB 읽기 → 암호화 → CBOM INSERT 순으로 db_cursor 밖에서 크립토 수행.
     """
@@ -90,11 +114,11 @@ def kem_encrypt(req: KemEncryptRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="plaintext는 base64-encoded 이어야 합니다")
 
-    # 1단계: DB 읽기 (read-only, db_cursor 내 HTTPException 없음)
+    # 1단계: DB 읽기 — public_key + algorithm_id 함께 조회
     try:
         with db_cursor() as (conn, cur):
             cur.execute(
-                "SELECT public_key FROM kem_keys WHERE id = %s",
+                "SELECT public_key, algorithm_id FROM kem_keys WHERE id = %s",
                 (req.key_id,),
             )
             row = cur.fetchone()
@@ -104,11 +128,19 @@ def kem_encrypt(req: KemEncryptRequest):
     if row is None:
         raise HTTPException(status_code=404, detail="key_id not found")
 
-    public_key_bytes = bytes(row[0])
+    public_key_bytes, stored_algorithm = bytes(row[0]), row[1]
 
-    # 2단계: KEM encap + AES 암호화 (db_cursor 외부)
+    # 헤더 있으면 DB algorithm_id와 일치 여부 검증 — 불일치 시 명시적 400
+    if x_kem_algorithm_id:
+        requested = x_kem_algorithm_id.strip().upper()
+        if requested not in KEM_WHITELIST:
+            raise HTTPException(status_code=400, detail="알고리즘 불일치: 허용되지 않는 알고리즘입니다")
+        if requested != stored_algorithm:
+            raise HTTPException(status_code=400, detail="알고리즘 불일치: 요청 알고리즘이 키 알고리즘과 다릅니다")
+
+    # 2단계: KEM encap + AES 암호화 — stored_algorithm 기준 (db_cursor 외부)
     try:
-        with get_kem() as kem:
+        with oqs.KeyEncapsulation(stored_algorithm) as kem:
             kem_ciphertext, shared_secret = kem.encap_secret(public_key_bytes)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="KEM 캡슐화 오류") from exc
@@ -120,12 +152,12 @@ def kem_encrypt(req: KemEncryptRequest):
     # 3단계: CBOM INSERT (Transactional — 실패 시 503)
     try:
         with db_cursor() as (conn, cur):
-            _cbom_insert(cur, KEM_ALGORITHM, "encrypt", req.key_id)
+            _cbom_insert(cur, stored_algorithm, "encrypt", req.key_id)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"DB 오류: {exc}") from exc
 
     return KemEncryptResponse(
-        algorithm=KEM_ALGORITHM,
+        algorithm=stored_algorithm,
         kem_ciphertext=base64.b64encode(bytes(kem_ciphertext)).decode(),
         aes_ciphertext=base64.b64encode(aes_ciphertext).decode(),
         aes_iv=base64.b64encode(aes_iv).decode(),
@@ -145,11 +177,11 @@ def kem_decrypt(req: KEMDecryptRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="입력값은 base64-encoded 이어야 합니다")
 
-    # 1단계: DB 읽기 (read-only, db_cursor 내 HTTPException 없음)
+    # 1단계: DB 읽기 — algorithm_id도 함께 조회 (키 생성 시 사용된 알고리즘으로 decap)
     try:
         with db_cursor() as (conn, cur):
             cur.execute(
-                "SELECT wrapped_secret, wrap_iv FROM kem_keys WHERE id = %s",
+                "SELECT wrapped_secret, wrap_iv, algorithm_id FROM kem_keys WHERE id = %s",
                 (req.key_id,),
             )
             row = cur.fetchone()
@@ -159,7 +191,7 @@ def kem_decrypt(req: KEMDecryptRequest):
     if row is None:
         raise HTTPException(status_code=404, detail="key_id not found")
 
-    wrapped_secret, wrap_iv = bytes(row[0]), bytes(row[1])
+    wrapped_secret, wrap_iv, stored_algorithm = bytes(row[0]), bytes(row[1]), row[2]
 
     # 2단계: 복호화 (db_cursor 외부, Oracle 방어 — 단일 에러 메시지)
     try:
@@ -168,7 +200,7 @@ def kem_decrypt(req: KEMDecryptRequest):
         raise HTTPException(status_code=400, detail="복호화 오류") from exc
 
     try:
-        with oqs.KeyEncapsulation(KEM_ALGORITHM, secret_key=secret_key_bytes) as kem:
+        with oqs.KeyEncapsulation(stored_algorithm, secret_key=secret_key_bytes) as kem:
             shared_secret = kem.decap_secret(kem_ct_bytes)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="복호화 오류") from exc
@@ -182,7 +214,7 @@ def kem_decrypt(req: KEMDecryptRequest):
     # 3단계: CBOM INSERT (Transactional — 실패 시 503)
     try:
         with db_cursor() as (conn, cur):
-            _cbom_insert(cur, KEM_ALGORITHM, "decrypt", req.key_id)
+            _cbom_insert(cur, stored_algorithm, "decrypt", req.key_id)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"DB 오류: {exc}") from exc
 

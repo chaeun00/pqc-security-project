@@ -1,5 +1,6 @@
 package com.pqc.gateway;
 
+import com.pqc.gateway.config.CryptoAlgorithmProperties;
 import com.pqc.gateway.config.CryptoEngineProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -8,7 +9,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 
 @SpringBootApplication
 @EnableFeignClients
-@EnableConfigurationProperties(CryptoEngineProperties.class)
+@EnableConfigurationProperties({CryptoEngineProperties.class, CryptoAlgorithmProperties.class})
 public class ApiGatewayApplication {
 
     public static void main(String[] args) {

@@ -25,6 +25,10 @@ services:
       - no-new-privileges:true
     env_file:
       - config/crypto-engine.env
+    environment:
+      # env_file 기본값을 쉘 환경변수로 override 가능 (Algorithm Agility — Day 8)
+      KEM_ALGORITHM_ID: ${KEM_ALGORITHM_ID:-ML-KEM-768}
+      DSA_ALGORITHM_ID: ${DSA_ALGORITHM_ID:-ML-DSA-65}
     deploy:
       resources:
         limits:

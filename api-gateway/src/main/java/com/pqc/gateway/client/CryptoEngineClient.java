@@ -9,11 +9,17 @@ import com.pqc.gateway.dto.KemDecryptResponse;
 import com.pqc.gateway.dto.KemEncryptRequest;
 import com.pqc.gateway.dto.KemEncryptResponse;
 import com.pqc.gateway.dto.KemInitResponse;
+import com.pqc.gateway.config.CryptoEngineClientConfig;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-@FeignClient(name = "crypto-engine", url = "${crypto.engine.url}", fallbackFactory = CryptoEngineClientFallbackFactory.class)
+@FeignClient(
+    name = "crypto-engine",
+    url = "${crypto.engine.url}",
+    fallbackFactory = CryptoEngineClientFallbackFactory.class,
+    configuration = CryptoEngineClientConfig.class
+)
 public interface CryptoEngineClient {
 
     @PostMapping("/dsa/sign")

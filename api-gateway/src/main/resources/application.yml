@@ -9,6 +9,9 @@ auth:
 crypto:
   engine:
     url: ${CRYPTO_ENGINE_URL:http://crypto-engine:8000}
+  algorithm:
+    kem-id: ${KEM_ALGORITHM_ID:ML-KEM-768}   # Algorithm Agility — crypto-engine과 동일 값 유지
+    dsa-id: ${DSA_ALGORITHM_ID:ML-DSA-65}
 
 spring:
   cloud:

@@ -256,6 +256,17 @@ jobs:
             && echo "PASS ✓ — 잘못된 base64 → 400" \
             || { echo "FAIL — 예상 400, 실제 $CODE"; exit 1; }
 
+      - name: "[Day8-AC2] GET /health/detail → cbom_inserted: true 확인"
+        run: |
+          HEALTH=$(curl -sf http://localhost:8000/health/detail)
+          echo "$HEALTH"
+          python3 -c "
+          import json, sys
+          h = json.loads('$HEALTH')
+          assert h.get('cbom_inserted') is True, f'FAIL: cbom_inserted={h.get(\"cbom_inserted\")}'
+          print('PASS ✓ — cbom_inserted: true 확인')
+          "
+
   # ── db-schema-test (신규 — Step 1-C 커버) ─────────────────
   db-schema-test:
     name: DB 스키마 검증 (테이블 + 인덱스)
@@ -748,3 +759,166 @@ jobs:
           assert decoded == b'Day7-E2E-Test', f'FAIL: plaintext 불일치 — {decoded}'
           print('PASS ✓ — /kem/decrypt plaintext 원문 일치')
           "
+
+  # ── unit-test (Day 8 — AlgorithmStrategy 화이트리스트 검증) ──
+  unit-test:
+    name: AlgorithmStrategy 단위 테스트 (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.12 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: pytest 설치 (oqs 불필요 — algorithm_strategy는 stdlib만 사용)
+        run: pip install pytest
+
+      - name: "[Day8-AC3] 화이트리스트 단위 테스트"
+        working-directory: crypto-engine
+        env:
+          KEM_ALGORITHM_ID: ML-KEM-768
+          DSA_ALGORITHM_ID: ML-DSA-65
+        run: python3 -m pytest tests/test_algorithm_strategy.py -v
+
+      - name: "[Day8-AC3] INVALID-ALG → startup exit code ≠ 0 확인"
+        working-directory: crypto-engine
+        run: |
+          KEM_ALGORITHM_ID=INVALID-ALG DSA_ALGORITHM_ID=ML-DSA-65 \
+            python3 -c "import app.algorithm_strategy" 2>&1 && RC=0 || RC=$?
+          [ "$RC" -ne 0 ] \
+            && echo "PASS ✓ — INVALID-ALG → exit code $RC (≠ 0)" \
+            || { echo "FAIL — exit code 0 (fail-fast 미동작)"; exit 1; }
+
+  # ── algorithm-agility-test (Day 8 — AC1) ──────────────────
+  algorithm-agility-test:
+    name: Algorithm Agility E2E (ML-KEM-512 전환 왕복)
+    runs-on: ubuntu-latest
+    needs: [build-and-trivy, api-gateway-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: pqc-db:secure 빌드
+        run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
+
+      - name: api-gateway Docker 빌드 (compose 이미지명으로 태깅)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api-gateway
+          load: true
+          tags: pqc-security-project-api-gateway:latest
+
+      - name: .env + config/*.env 생성
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+          cp config/crypto-engine.env.example config/crypto-engine.env
+          sed -i 's/^KEM_WRAP_KEY=.*/KEM_WRAP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/' config/crypto-engine.env
+          sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=pqc_test/' config/crypto-engine.env
+          cp config/api-gateway.env.example config/api-gateway.env
+          cp config/dashboard.env.example config/dashboard.env
+          echo "DEMO_USER=demo" >> config/api-gateway.env
+          echo "DEMO_PASSWORD=demo123" >> config/api-gateway.env
+
+      - name: "[Day8-AC1] ML-KEM-512로 스택 기동 (환경변수 전환, 재빌드 없음)"
+        run: |
+          KEM_ALGORITHM_ID=ML-KEM-512 \
+            docker compose --env-file .env up -d --no-build --wait --wait-timeout 180 \
+            db crypto-engine api-gateway
+
+      - name: "[Day8-AC1] POST /api/auth/login → JWT 발급"
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:8080/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"userId":"demo","password":"demo123"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: "[Day8-AC1] /api/encrypt → algorithm: ML-KEM-512 확인"
+        run: |
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'agility-test').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"plaintext\":\"$PLAIN\"}")
+          echo "$RESP"
+          python3 -c "
+          import json, sys
+          r = json.loads('$RESP')
+          assert r.get('algorithm') == 'ML-KEM-512', f'FAIL: algorithm={r.get(\"algorithm\")}'
+          print('PASS ✓ — ML-KEM-512 전환 후 /api/encrypt 200 + algorithm 확인')
+          " || exit 1
+          echo "ENCRYPT_RESP=$(echo "$RESP" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))")" >> $GITHUB_ENV
+
+      - name: "[Day8-AC1] /kem/decrypt → plaintext 원문 일치 (왕복 200)"
+        run: |
+          python3 -c "
+          import os, json, urllib.request, base64
+          enc = json.loads(os.environ['ENCRYPT_RESP'])
+          body = json.dumps({
+              'key_id': enc['key_id'],
+              'kem_ciphertext': enc['kem_ciphertext'],
+              'aes_ciphertext': enc['aes_ciphertext'],
+              'aes_iv': enc['aes_iv'],
+          }).encode()
+          req = urllib.request.Request(
+              'http://localhost:8080/kem/decrypt',
+              data=body,
+              headers={'Content-Type': 'application/json',
+                       'Authorization': 'Bearer ' + os.environ['TOKEN']},
+              method='POST',
+          )
+          r = json.loads(urllib.request.urlopen(req, timeout=10).read())
+          decoded = base64.b64decode(r['plaintext'])
+          assert decoded == b'agility-test', f'FAIL: {decoded}'
+          print('PASS ✓ — ML-KEM-512 왕복 복호화 원문 일치')
+          "
+
+      - name: "[Day8-AC1] /kem/encrypt 헤더 불일치 → 400 확인"
+        run: |
+          # ML-KEM-512 key_id에 ML-KEM-768 헤더 → 400
+          INIT=$(curl -sf -X POST http://localhost:8000/kem/init \
+            -H "Content-Type: application/json" \
+            -H "X-Kem-Algorithm-Id: ML-KEM-512" \
+            -d '{}')
+          KEY_ID=$(echo "$INIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'mismatch-test').decode())")
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8000/kem/encrypt \
+            -H "Content-Type: application/json" \
+            -H "X-Kem-Algorithm-Id: ML-KEM-768" \
+            -d "{\"key_id\":$KEY_ID,\"plaintext\":\"$PLAIN\"}")
+          [ "$CODE" = "400" ] \
+            && echo "PASS ✓ — 헤더 알고리즘 불일치 → 400" \
+            || { echo "FAIL — 예상 400, 실제 $CODE"; exit 1; }
+
+      - name: "[Day8-AC1] /kem/encrypt 헤더 없음 → DB algorithm_id 기반 200"
+        run: |
+          # ML-KEM-512 key_id + 헤더 없음 → stored_algorithm(ML-KEM-512)으로 encap → 200
+          INIT=$(curl -sf -X POST http://localhost:8000/kem/init \
+            -H "Content-Type: application/json" \
+            -H "X-Kem-Algorithm-Id: ML-KEM-512" \
+            -d '{}')
+          KEY_ID=$(echo "$INIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])")
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'no-header-test').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8000/kem/encrypt \
+            -H "Content-Type: application/json" \
+            -d "{\"key_id\":$KEY_ID,\"plaintext\":\"$PLAIN\"}")
+          python3 -c "
+          import json
+          r = json.loads('$RESP')
+          assert r['algorithm'] == 'ML-KEM-512', f'FAIL: algorithm={r[\"algorithm\"]}'
+          print('PASS ✓ — 헤더 없음 → DB algorithm_id(ML-KEM-512) 기반 encap 200')
+          " || exit 1

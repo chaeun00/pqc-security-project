@@ -2096,3 +2096,152 @@ API 호출 시: cbom_assets 테이블에 직접 쓰기보다는, 애플리케이
 1. 환경변수만 변경 + docker compose up → 알고리즘 전환 + API 정상 동작
 2. 서버 기동 시 cbom_assets에 전환 이벤트 INSERT 확인
 3. 화이트리스트 외 알고리즘 ID → startup 단계 명시적 오류 발생
+
+
+---
+
+## Day 8 수정 계획 (2026-03-18) — 리뷰 미완 항목 해소
+
+### 목표
+Day 8 리뷰의 미완 인수조건(AC1·AC2), 위험요소 3건, 테스트 공백 4건을 해소하여 Day 9 진입 기준을 충족한다.
+
+### 질문에 대한 답
+1. api-gateway `@ConfigurationProperties` 구현 시, 알고리즘 ID를 crypto-engine 요청에 헤더로 전달할지, 요청 파라미터(body)로 전달할지? => HTTP 헤더(Header)로 전달하는 방식을 권장. API Gateway는 요청을 중계하면서 필요한 인증 정보나 처리 옵션을 헤더에 주입하는 것이 일반적인 아키텍처 패턴
+2. `/health` 응답에 `cbom_inserted` 필드 추가 시, 인증 없이 외부 접근 가능한 상태인데 노출 허용 여부? => 보안 관점에서는 외부 노출을 제한하거나 필드를 제거하는 것이 안전
+3. `conftest.py` fixture 방식으로 sys.exit 함정 방어 시, 기존 test_algorithm_strategy.py 7개 테스트 구조 변경 허용 여부? => 변경을 적극 권장. 테스트의 안정성과 독립성을 확보하는 것이 우선
+
+### 범위
+
+#### Step 1 — api-gateway Java binding 구현 [HIGH, 블로커]
+- `CryptoAlgorithmProperties.java` 신규: `@ConfigurationProperties(prefix = "crypto.algorithm")` 으로 kemId/dsaId 바인딩
+- EncryptController 또는 Feign Request에서 알고리즘 ID를 crypto-engine 호출에 포함
+- application.yml 기존 키와 연결 검증
+
+#### Step 2 — CBOM INSERT 가시성 확보 [MEDIUM + AC2]
+- main.py `except` 블록에 `exc_info=True` 추가
+- `/health` 응답에 `cbom_inserted: bool` 필드 추가 (startup 플래그)
+- CI: 스택 기동 후 `GET /health` → `cbom_inserted: true` 어설션
+
+#### Step 3 — CI AC1 통합 테스트 (알고리즘 전환) [AC1]
+- `e2e-encrypt` 잡에 `KEM_ALGORITHM_ID=ML-KEM-512` 오버라이드 matrix 또는 별도 잡 추가
+- 전환 후 `/api/encrypt → /api/decrypt` 왕복 200 확인
+
+#### Step 4 — 모듈 임포트 sys.exit 함정 방어 [MEDIUM]
+- `crypto-engine/tests/conftest.py` 신규: KEM/DSA 알고리즘 기본 env fixture
+- algorithm_factory import 테스트용 monkeypatch + importlib.reload() 패턴 주석 명시
+
+#### Step 5 — 환경변수 오염 케이스 방어 [LOW]
+- `validate_algorithm()` 진입 전 `.strip().upper()` 정규화
+- test_algorithm_strategy.py에 공백/소문자/빈 문자열 케이스 추가
+
+### 인수조건
+1. CI에서 KEM_ALGORITHM_ID=ML-KEM-512 환경변수로 /api/encrypt 왕복 200 통과
+2. 스택 기동 후 GET /health 응답에 cbom_inserted: true 포함
+3. api-gateway가 CryptoAlgorithmProperties로 알고리즘 ID를 읽어 crypto-engine 요청에 포함하는 경로 존재
+
+---
+
+## Day 8 검증 리뷰 후속 수정 계획 (2026-03-18)
+
+### 목표
+Day 8 수정 계획 검증 리뷰의 잔존 위험요소 3건·테스트 공백 2건 중 타당한 항목을 해소하거나 Day 9로 명확히 이관한다.
+
+### 범위
+
+#### Step 1 — AlgorithmFeignInterceptor 범위 제한 [LOW]
+- @Component 제거
+- CryptoEngineClientConfig 신규: Interceptor를 빈으로 등록
+- @FeignClient(configuration = CryptoEngineClientConfig.class) 로 범위 한정
+
+#### Step 2 — /health cbom_inserted 분리 [LOW]
+- /health: {"status": "ok"} 만 반환 (docker-compose healthcheck 유지)
+- /health/detail: cbom_inserted 포함 (향후 인증 가드 가능 엔드포인트)
+- CI 어설션: GET /health/detail → cbom_inserted: true 로 변경
+
+#### Step 3 — [MEDIUM] crypto-engine 헤더 수신
+- kem.py에서 X-Kem-Algorithm-Id 헤더 읽기 → validate_algorithm() 재검증 → per-request oqs 인스턴스
+- /api/encrypt E2E에서 헤더 오버라이드 동작 확인 테스트
+- 테스트 공백 1(헤더 수신 테스트 없음) 동시 해소
+
+### 인수조건
+1. AlgorithmFeignInterceptor가 CryptoEngineClient 전용으로 범위 제한됨
+2. /health 응답에 cbom_inserted 없음, /health/detail 에서만 확인
+
+---
+
+## Day 8 kem_encrypt 알고리즘 불일치 수정 계획 (2026-03-18)
+
+### 근거
+kem_encrypt가 헤더/env var 알고리즘으로 encap하는데 DB의 key algorithm_id를 읽지 않음.
+헤더 불일치 시 liboqs 내부 오류로 400이 나오나 원인 불명확. kem_decrypt와 설계 불일치.
+
+### 질문에 대한 답
+- kem_encrypt에서 헤더 알고리즘 ≠ DB key 알고리즘 불일치 시 400 반환(요청 거부)할지, DB algorithm_id를 우선해서 헤더를 무시할지? 400 Bad Request (요청 거부) 권장
+- 불일치 에러 메시지를 클라이언트에 노출해도 되는가? => 추상화된 메시지 권장
+
+### 범위
+
+#### Step 1 — kem_encrypt DB algorithm_id 명시적 검증
+- SELECT public_key, algorithm_id FROM kem_keys WHERE id = %s 로 변경
+- 헤더 있고 stored_algorithm 불일치 시 400 명시적 반환
+- 헤더 없으면 stored_algorithm으로 encap (kem_decrypt와 대칭)
+
+#### Step 2 — 테스트 케이스 추가
+- ML-KEM-512 key_id + 헤더 ML-KEM-768 → 400
+- ML-KEM-512 key_id + 헤더 없음 → 200 (DB algorithm_id 기반)
+
+#### Step 3 — DSA 헤더 오버라이드 Day 9 명시
+- dsa_sign/dsa_verify per-request 알고리즘 전환 → 키쌍 재생성 필요로 Day 9 처리
+
+### 인수조건
+1. kem_encrypt에서 헤더 불일치 시 명시적 400 반환
+2. 헤더 없는 kem_encrypt → DB algorithm_id 기반 encap
+3. DSA 헤더 오버라이드가 plan.md Day 9 항목으로 명시
+
+---
+
+#### Day 9 이관 항목
+- **DSA 헤더 오버라이드**: `dsa_sign` / `dsa_verify` per-request 알고리즘 전환은 키쌍 재생성이 필요하므로 Day 9 처리
+- **Hot-swap**: 재기동 없는 Runtime API 기반 알고리즘 전환 아키텍처 계획 추가
+---
+
+## Day 9 (2026-03-19) 세부 계획 — SNDL High-Risk 우선순위 라우팅
+
+### 목표
+요청 민감도(HIGH/MEDIUM/LOW)를 분류해 SNDL 위협에 비례하는 KEM 알고리즘(ML-KEM-1024/768/512)으로
+자동 라우팅하고, CBOM에 실제 위험도를 기록한다.
+
+### 현재 상태 기준선
+- EncryptController: risk_level 개념 없음
+- AlgorithmFeignInterceptor: env var 기반 정적 헤더 — per-request 오버라이드 없음
+- kem.py _resolve_kem_algorithm(): X-Kem-Algorithm-Id 헤더 수신 인프라 완비
+- cbom_assets.risk_level: 'NONE' 하드코딩
+
+### 질문에 대한 답
+1. 민감도 분류: 클라이언트 제공 risk_level 필드 vs api-gateway 자동 분류? => API Gateway 자동 분류 권장.
+보안과 운영 효율성 측면에서 API Gateway(또는 백엔드 서버)가 자동 분류하는 방식이 훨씬 유리
+2. Per-request 헤더 주입: ThreadLocal(AlgorithmFeignInterceptor) vs Feign 메서드 파라미터? => Spring Cloud 환경에서 기존의 "Spring다운" 코딩 스타일과 비즈니스 로직의 순수성을 고려한다면 Interceptor를 통한 암시적 전달이 더 적합
+3. DSA 이관 항목: 다중 키쌍 관리까지 vs 응답 algorithm 필드 포함으로 제한? => SNDL 분류 기준 응답 포함으로 제한 권장. 클라이언트에게 "이 데이터는 SNDL 기준에 따라 특정 알고리즘(예: ML-DSA-65)으로 보호되옸다"라는 메타데이터를 정확히 전달하는 것만으로도 API 설계의 완성도는 충분히 높게 평가. 다중 키 관리 로직이 없더라도, "보안 정책에 따른 알고리즘 명시"라는 흐름이 완성되면 프로젝트의 논리적 흐름(Sequence)이 깨지지 않음.
+
+### 범위
+
+#### Step 1 — RiskClassifier + 알고리즘 매핑 (api-gateway)
+- RiskLevel enum: HIGH/MEDIUM/LOW + toKemAlgorithm() (HIGH→ML-KEM-1024, MEDIUM→768, LOW→512)
+- RiskClassifier 서비스: request body risk_level 읽기 → 없으면 MEDIUM 폴백
+- EncryptRequest DTO: riskLevel 필드 추가 (optional)
+
+#### Step 2 — Per-request 헤더 주입 + CBOM risk_level 연동
+- CryptoEngineClient.kemInit(): @RequestHeader("X-Kem-Algorithm-Id") 파라미터 추가
+- EncryptController: RiskClassifier → kemAlgorithm → kemInit 헤더 포함 호출
+- EncryptResponse: risk_level 필드 추가
+- kem_encrypt: X-Risk-Level 헤더 수신 → cbom_assets.risk_level 기록 ('NONE' 제거)
+- _cbom_startup_insert: KEM_META security_level → risk_level 변환
+
+#### Step 3 — DSA 이관 + CI 검증
+- DSA: 현재 고정 알고리즘 유지 (SNDL 라우팅 대상 아님), Hot-swap은 Day 10+ 이관
+- CI matrix: risk_level HIGH/MEDIUM/LOW(미전송) 세 케이스 각각 algorithm + cbom 검증
+
+### 인수조건
+1. POST /api/encrypt { risk_level: "HIGH" } → algorithm: ML-KEM-1024 + cbom_assets.risk_level: HIGH
+2. risk_level 미전송 → ML-KEM-768(MEDIUM) 폴백 + CI 자동 검증
+3. CI matrix HIGH/MEDIUM/LOW 세 케이스 모두 green
