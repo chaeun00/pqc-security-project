@@ -2200,6 +2200,22 @@ kem_encrypt가 헤더/env var 알고리즘으로 encap하는데 DB의 key algori
 
 ---
 
+## Day 8 CI 버그 수정 (2026-03-18) — algorithm-agility-test KEM_ALGORITHM_ID 미주입
+
+### 원인
+Docker Compose v2에서 --env-file 플래그는 쉘 인라인 변수보다 우선순위가 높음.
+.env에 KEM_ALGORITHM_ID=ML-KEM-768이 그대로 남아 ML-KEM-512 인라인 설정을 덮어씀.
+
+### 수정
+ci.yml L826 다음에 추가:
+sed -i 's/^KEM_ALGORITHM_ID=.*/KEM_ALGORITHM_ID=ML-KEM-512/' .env
+
+### 인수조건
+1. algorithm-agility-test 잡 .env 생성 후 KEM_ALGORITHM_ID=ML-KEM-512 반영
+2. [Day8-AC1] /api/encrypt → algorithm: ML-KEM-512 green
+
+---
+
 #### Day 9 이관 항목
 - **DSA 헤더 오버라이드**: `dsa_sign` / `dsa_verify` per-request 알고리즘 전환은 키쌍 재생성이 필요하므로 Day 9 처리
 - **Hot-swap**: 재기동 없는 Runtime API 기반 알고리즘 전환 아키텍처 계획 추가
