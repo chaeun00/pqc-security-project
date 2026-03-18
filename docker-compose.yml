@@ -19,6 +19,8 @@ services:
       context: ./crypto-engine
     networks:
       - pqc-internal
+    ports:
+      - "8000:8000"
     cap_drop:
       - ALL
     security_opt:
@@ -62,6 +64,10 @@ services:
       - no-new-privileges:true
     env_file:
       - config/api-gateway.env
+    environment:
+      # Algorithm Agility — crypto-engine과 동일 값 유지 (Day 8 버그 수정)
+      KEM_ALGORITHM_ID: ${KEM_ALGORITHM_ID:-ML-KEM-768}
+      DSA_ALGORITHM_ID: ${DSA_ALGORITHM_ID:-ML-DSA-65}
     deploy:
       resources:
         limits:
