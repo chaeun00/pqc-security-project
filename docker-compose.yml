@@ -68,17 +68,19 @@ services:
       # Algorithm Agility — crypto-engine과 동일 값 유지 (Day 8 버그 수정)
       KEM_ALGORITHM_ID: ${KEM_ALGORITHM_ID:-ML-KEM-768}
       DSA_ALGORITHM_ID: ${DSA_ALGORITHM_ID:-ML-DSA-65}
+      # Day 9 CI 수정: env_file 보다 명시적으로 주입 (startup profile 보장)
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
     deploy:
       resources:
         limits:
           cpus: "${API_GATEWAY_CPU_LIMIT:-0.5}"
-          memory: "${API_GATEWAY_MEM_LIMIT:-512m}"
+          memory: "${API_GATEWAY_MEM_LIMIT:-1024m}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 60s
+      start_period: 90s
     restart: unless-stopped
     depends_on:
       db:

@@ -29,7 +29,7 @@ COPY --chown=nonroot:nonroot --from=builder /app/build/libs/*.jar app.jar
 
 USER nonroot
 
-EXPOSE 8080
+EXPOSE 8080 8081
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=60s \
-  CMD curl -f http://localhost:8080/actuator/health || exit 1
-ENTRYPOINT ["java", "-jar", "app.jar"]
+  CMD curl -f http://localhost:8081/actuator/health || exit 1
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=60.0", "-jar", "app.jar"]

@@ -1,5 +1,6 @@
 package com.pqc.gateway.service;
 
+import com.pqc.gateway.config.CryptoAlgorithmProperties;
 import com.pqc.gateway.config.RiskLevel;
 import com.pqc.gateway.dto.EncryptRequest;
 import org.junit.jupiter.api.Test;
@@ -11,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RiskClassifierTest {
 
-    private final RiskClassifier classifier = new RiskClassifier();
+    private final RiskClassifier classifier = new RiskClassifier(new CryptoAlgorithmProperties());
 
     @Test
     void classify_nullRiskLevel_returnsMedium() {

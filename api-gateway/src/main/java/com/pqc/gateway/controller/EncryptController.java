@@ -30,8 +30,9 @@ public class EncryptController {
     @PostMapping
     public ResponseEntity<EncryptResponse> encrypt(@Valid @RequestBody EncryptRequest request) {
         RiskLevel risk = riskClassifier.classify(request);
-        KemInitResponse init = cryptoEngineClient.kemInit(risk.toKemAlgorithm());
-        KemEncryptResponse enc = cryptoEngineClient.kemEncrypt(risk.toKemAlgorithm(), risk.name(),
+        String kemAlgorithm = riskClassifier.resolveAlgorithm(risk);
+        KemInitResponse init = cryptoEngineClient.kemInit(kemAlgorithm);
+        KemEncryptResponse enc = cryptoEngineClient.kemEncrypt(kemAlgorithm, risk.name(),
                 new KemEncryptRequest(init.keyId(), request.plaintext()));
         return ResponseEntity.ok(new EncryptResponse(
                 init.keyId(),
