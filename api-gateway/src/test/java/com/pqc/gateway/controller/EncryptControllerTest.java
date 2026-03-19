@@ -1,10 +1,12 @@
 package com.pqc.gateway.controller;
 
 import com.pqc.gateway.client.CryptoEngineClient;
+import com.pqc.gateway.config.RiskLevel;
 import com.pqc.gateway.dto.DsaVerifyResponse;
 import com.pqc.gateway.dto.KemEncryptResponse;
 import com.pqc.gateway.dto.KemInitResponse;
 import com.pqc.gateway.filter.JwtKeyCache;
+import com.pqc.gateway.service.RiskClassifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +41,9 @@ class EncryptControllerTest {
     @MockBean
     JwtKeyCache jwtKeyCache;
 
+    @MockBean
+    RiskClassifier riskClassifier;
+
     private String validToken;
 
     @BeforeEach
@@ -57,14 +62,16 @@ class EncryptControllerTest {
         // crypto-engine DSA 서명 검증: 항상 valid=true 반환
         when(cryptoEngineClient.verify(any()))
                 .thenReturn(new DsaVerifyResponse("ML-DSA-65", true));
+        // RiskClassifier 기본값: MEDIUM
+        when(riskClassifier.classify(any())).thenReturn(RiskLevel.MEDIUM);
     }
 
-    // 인수조건 1: 유효 JWT + 정상 요청 → 200 + {key_id, kem_ciphertext, aes_ciphertext, aes_iv}
+    // 인수조건 1: 유효 JWT + 정상 요청 → 200 + {key_id, kem_ciphertext, aes_ciphertext, aes_iv, risk_level}
     @Test
     void encrypt_success_returns200WithAllFields() throws Exception {
-        when(cryptoEngineClient.kemInit())
+        when(cryptoEngineClient.kemInit(any()))
                 .thenReturn(new KemInitResponse(1L, "ML-KEM-768"));
-        when(cryptoEngineClient.kemEncrypt(any()))
+        when(cryptoEngineClient.kemEncrypt(any(), any(), any()))
                 .thenReturn(new KemEncryptResponse("ML-KEM-768", "kem_ct_val", "aes_ct_val", "aes_iv_val"));
 
         mvc.perform(post("/api/encrypt")
@@ -76,7 +83,8 @@ class EncryptControllerTest {
                 .andExpect(jsonPath("$.algorithm", is("ML-KEM-768")))
                 .andExpect(jsonPath("$.kem_ciphertext", is("kem_ct_val")))
                 .andExpect(jsonPath("$.aes_ciphertext", is("aes_ct_val")))
-                .andExpect(jsonPath("$.aes_iv", is("aes_iv_val")));
+                .andExpect(jsonPath("$.aes_iv", is("aes_iv_val")))
+                .andExpect(jsonPath("$.risk_level", is("MEDIUM")));
     }
 
     // 인수조건 2: JWT 없음 → 401
@@ -101,7 +109,7 @@ class EncryptControllerTest {
     // 인수조건 4: crypto-engine 다운 (kemInit fallback) → 503
     @Test
     void encrypt_cryptoEngineDown_returns503() throws Exception {
-        when(cryptoEngineClient.kemInit())
+        when(cryptoEngineClient.kemInit(any()))
                 .thenThrow(new ResponseStatusException(
                         HttpStatus.SERVICE_UNAVAILABLE, "crypto-engine unavailable"));
 
@@ -110,5 +118,54 @@ class EncryptControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"plaintext\":\"aGVsbG8=\"}"))
                 .andExpect(status().isServiceUnavailable());
+    }
+
+    // Day 10 — HIGH 경로: risk_level=HIGH → algorithm: ML-KEM-1024, risk_level: HIGH
+    @Test
+    void encrypt_highRisk_returnsML_KEM_1024() throws Exception {
+        when(riskClassifier.classify(any())).thenReturn(RiskLevel.HIGH);
+        when(cryptoEngineClient.kemInit(any()))
+                .thenReturn(new KemInitResponse(2L, "ML-KEM-1024"));
+        when(cryptoEngineClient.kemEncrypt(any(), any(), any()))
+                .thenReturn(new KemEncryptResponse("ML-KEM-1024", "ct_1024", "aes_ct", "aes_iv"));
+
+        mvc.perform(post("/api/encrypt")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plaintext\":\"aGVsbG8=\",\"risk_level\":\"HIGH\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.algorithm", is("ML-KEM-1024")))
+                .andExpect(jsonPath("$.risk_level", is("HIGH")));
+    }
+
+    // Day 10 — LOW 경로: risk_level=LOW → algorithm: ML-KEM-512, risk_level: LOW
+    @Test
+    void encrypt_lowRisk_returnsML_KEM_512() throws Exception {
+        when(riskClassifier.classify(any())).thenReturn(RiskLevel.LOW);
+        when(cryptoEngineClient.kemInit(any()))
+                .thenReturn(new KemInitResponse(3L, "ML-KEM-512"));
+        when(cryptoEngineClient.kemEncrypt(any(), any(), any()))
+                .thenReturn(new KemEncryptResponse("ML-KEM-512", "ct_512", "aes_ct", "aes_iv"));
+
+        mvc.perform(post("/api/encrypt")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plaintext\":\"aGVsbG8=\",\"risk_level\":\"LOW\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.algorithm", is("ML-KEM-512")))
+                .andExpect(jsonPath("$.risk_level", is("LOW")));
+    }
+
+    // Day 10 — 잘못된 risk_level → 400
+    @Test
+    void encrypt_invalidRiskLevel_returns400() throws Exception {
+        when(riskClassifier.classify(any()))
+                .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid risk_level"));
+
+        mvc.perform(post("/api/encrypt")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plaintext\":\"aGVsbG8=\",\"risk_level\":\"SUPER\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

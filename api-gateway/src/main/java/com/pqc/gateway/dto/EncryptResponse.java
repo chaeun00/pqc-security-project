@@ -7,4 +7,5 @@ public record EncryptResponse(
         String algorithm,
         @JsonProperty("kem_ciphertext") String kemCiphertext,
         @JsonProperty("aes_ciphertext") String aesCiphertext,
-        @JsonProperty("aes_iv") String aesIv) {}
+        @JsonProperty("aes_iv") String aesIv,
+        @JsonProperty("risk_level") String riskLevel) {}

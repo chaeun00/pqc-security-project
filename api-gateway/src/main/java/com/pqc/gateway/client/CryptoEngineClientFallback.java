@@ -27,12 +27,12 @@ public class CryptoEngineClientFallback implements CryptoEngineClient {
     }
 
     @Override
-    public KemInitResponse kemInit() {
+    public KemInitResponse kemInit(String kemAlgorithmId) {
         throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "crypto-engine unavailable");
     }
 
     @Override
-    public KemEncryptResponse kemEncrypt(KemEncryptRequest request) {
+    public KemEncryptResponse kemEncrypt(String kemAlgorithmId, String riskLevel, KemEncryptRequest request) {
         throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "crypto-engine unavailable");
     }
 

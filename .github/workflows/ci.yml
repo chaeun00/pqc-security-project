@@ -791,6 +791,140 @@ jobs:
             && echo "PASS ✓ — INVALID-ALG → exit code $RC (≠ 0)" \
             || { echo "FAIL — exit code 0 (fail-fast 미동작)"; exit 1; }
 
+  # ── sndl-routing-test (Day 9 — AC1·AC2·AC3) ──────────────────
+  sndl-routing-test:
+    name: SNDL Routing E2E (HIGH/MEDIUM/LOW 라우팅 검증)
+    runs-on: ubuntu-latest
+    needs: [build-and-trivy, api-gateway-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: crypto-engine 빌드 (GHA 캐시 히트, --load)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crypto-engine
+          load: true
+          tags: pqc-security-project-crypto-engine:latest
+          cache-from: type=gha
+
+      - name: pqc-db:secure 빌드
+        run: DOCKER_CONTENT_TRUST=0 docker build -t pqc-db:secure -f db/Dockerfile.db ./db
+
+      - name: api-gateway Docker 빌드 (compose 이미지명으로 태깅)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api-gateway
+          load: true
+          tags: pqc-security-project-api-gateway:latest
+
+      - name: .env + config/*.env 생성
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=pqc_test/' .env
+          cp config/crypto-engine.env.example config/crypto-engine.env
+          sed -i 's/^KEM_WRAP_KEY=.*/KEM_WRAP_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/' config/crypto-engine.env
+          sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=pqc_test/' config/crypto-engine.env
+          cp config/api-gateway.env.example config/api-gateway.env
+          cp config/dashboard.env.example config/dashboard.env
+          echo "DEMO_USER=demo" >> config/api-gateway.env
+          echo "DEMO_PASSWORD=demo123" >> config/api-gateway.env
+
+      - name: "[Day9] 스택 기동 (KEM_ALGORITHM_ID=ML-KEM-768 기본값)"
+        run: |
+          docker compose --env-file .env up -d --no-build --wait --wait-timeout 180 \
+            db crypto-engine api-gateway
+
+      - name: "[Day9] POST /api/auth/login → JWT 발급"
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:8080/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"userId":"demo","password":"demo123"}' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: "[Day9-AC1] risk_level=HIGH → algorithm: ML-KEM-1024 + risk_level: HIGH"
+        run: |
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'sndl-high-test').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"plaintext\":\"$PLAIN\",\"risk_level\":\"HIGH\"}")
+          echo "$RESP"
+          python3 -c "
+          import json, sys
+          r = json.loads('$RESP')
+          assert r.get('algorithm') == 'ML-KEM-1024', f'FAIL: algorithm={r.get(\"algorithm\")}'
+          assert r.get('risk_level') == 'HIGH', f'FAIL: risk_level={r.get(\"risk_level\")}'
+          print('PASS ✓ — HIGH → ML-KEM-1024 + risk_level:HIGH 확인')
+          " || exit 1
+
+      - name: "[Day9-AC1] CBOM risk_level=HIGH DB 검증"
+        run: |
+          docker compose exec -T db psql -U pqc -d pqc_db -t -c \
+            "SELECT risk_level FROM cbom_assets WHERE algorithm_id='ML-KEM-1024' AND asset->>'event'='encrypt' ORDER BY id DESC LIMIT 1;" \
+            | grep -q "HIGH" && echo "PASS ✓ — cbom_assets.risk_level=HIGH 확인" || { echo "FAIL: cbom risk_level HIGH 없음"; exit 1; }
+
+      - name: "[Day9-AC2] risk_level 미전송 → algorithm: ML-KEM-768 + risk_level: MEDIUM"
+        run: |
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'sndl-medium-default-test').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"plaintext\":\"$PLAIN\"}")
+          echo "$RESP"
+          python3 -c "
+          import json, sys
+          r = json.loads('$RESP')
+          assert r.get('algorithm') == 'ML-KEM-768', f'FAIL: algorithm={r.get(\"algorithm\")}'
+          assert r.get('risk_level') == 'MEDIUM', f'FAIL: risk_level={r.get(\"risk_level\")}'
+          print('PASS ✓ — risk_level 미전송 → ML-KEM-768 MEDIUM 폴백 확인')
+          " || exit 1
+
+      - name: "[Day10-AC2] CBOM risk_level=MEDIUM DB 검증"
+        run: |
+          docker compose exec -T db psql -U pqc -d pqc_db -t -c \
+            "SELECT risk_level FROM cbom_assets WHERE algorithm_id='ML-KEM-768' AND asset->>'event'='encrypt' ORDER BY id DESC LIMIT 1;" \
+            | grep -q "MEDIUM" && echo "PASS ✓ — cbom_assets.risk_level=MEDIUM 확인" || { echo "FAIL: cbom risk_level MEDIUM 없음"; exit 1; }
+
+      - name: "[Day9-AC3] risk_level=LOW → algorithm: ML-KEM-512 + risk_level: LOW"
+        run: |
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'sndl-low-test').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"plaintext\":\"$PLAIN\",\"risk_level\":\"LOW\"}")
+          echo "$RESP"
+          python3 -c "
+          import json, sys
+          r = json.loads('$RESP')
+          assert r.get('algorithm') == 'ML-KEM-512', f'FAIL: algorithm={r.get(\"algorithm\")}'
+          assert r.get('risk_level') == 'LOW', f'FAIL: risk_level={r.get(\"risk_level\")}'
+          print('PASS ✓ — LOW → ML-KEM-512 + risk_level:LOW 확인')
+          " || exit 1
+
+      - name: "[Day10-AC3] CBOM risk_level=LOW DB 검증"
+        run: |
+          docker compose exec -T db psql -U pqc -d pqc_db -t -c \
+            "SELECT risk_level FROM cbom_assets WHERE algorithm_id='ML-KEM-512' AND asset->>'event'='encrypt' ORDER BY id DESC LIMIT 1;" \
+            | grep -q "LOW" && echo "PASS ✓ — cbom_assets.risk_level=LOW 확인" || { echo "FAIL: cbom risk_level LOW 없음"; exit 1; }
+
+      - name: "[Day10] invalid risk_level → 400 검증"
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"plaintext":"dGVzdA==","risk_level":"SUPER"}')
+          [ "$HTTP_CODE" -eq 400 ] \
+            && echo "PASS ✓ — invalid risk_level → 400 확인" \
+            || { echo "FAIL: expected 400, got $HTTP_CODE"; exit 1; }
+
+      - name: 스택 종료
+        if: always()
+        run: docker compose down -v
+
   # ── algorithm-agility-test (Day 8 — AC1) ──────────────────
   algorithm-agility-test:
     name: Algorithm Agility E2E (ML-KEM-512 전환 왕복)

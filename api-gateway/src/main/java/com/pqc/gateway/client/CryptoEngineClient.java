@@ -13,6 +13,7 @@ import com.pqc.gateway.config.CryptoEngineClientConfig;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 
 @FeignClient(
     name = "crypto-engine",
@@ -29,10 +30,10 @@ public interface CryptoEngineClient {
     DsaVerifyResponse verify(@RequestBody DsaVerifyRequest request);
 
     @PostMapping("/kem/init")
-    KemInitResponse kemInit();
+    KemInitResponse kemInit(@RequestHeader("X-Kem-Algorithm-Id") String kemAlgorithmId);
 
     @PostMapping("/kem/encrypt")
-    KemEncryptResponse kemEncrypt(@RequestBody KemEncryptRequest request);
+    KemEncryptResponse kemEncrypt(@RequestHeader("X-Kem-Algorithm-Id") String kemAlgorithmId, @RequestHeader("X-Risk-Level") String riskLevel, @RequestBody KemEncryptRequest request);
 
     @PostMapping("/kem/decrypt")
     KemDecryptResponse kemDecrypt(@RequestBody KemDecryptRequest request);

@@ -2261,3 +2261,25 @@ sed -i 's/^KEM_ALGORITHM_ID=.*/KEM_ALGORITHM_ID=ML-KEM-512/' .env
 1. POST /api/encrypt { risk_level: "HIGH" } → algorithm: ML-KEM-1024 + cbom_assets.risk_level: HIGH
 2. risk_level 미전송 → ML-KEM-768(MEDIUM) 폴백 + CI 자동 검증
 3. CI matrix HIGH/MEDIUM/LOW 세 케이스 모두 green
+
+---
+
+## Day 10 계획 (2026-03-19) — Day 9 리뷰 위험요소·테스트 공백 수정
+
+### 목표
+Day 9 리뷰에서 식별된 위험요소(R1~R4)·테스트 공백(T1~T4) 중 타당성 확인 항목을 단위 테스트 추가·CI CBOM DB 검증 보강·폴백 정책 결정으로 해소한다.
+
+### 범위
+- Step 1: RiskClassifierTest.java 신설 (null/blank/소문자/invalid/정상 케이스)
+- Step 2: ci.yml CBOM DB 검증 step 추가 (AC2 MEDIUM, AC3 LOW)
+- Step 3: EncryptControllerTest HIGH·LOW 경로 추가 + AlgorithmFeignInterceptorTest 신설
+
+### 인수조건
+- AC1: RiskClassifierTest 전체 케이스 ./gradlew test 통과
+- AC2: CI sndl-routing-test에 MEDIUM·LOW CBOM DB 검증 step 추가, 그린 빌드
+- AC3: EncryptControllerTest HIGH/LOW + AlgorithmFeignInterceptorTest 추가, ./gradlew test 통과
+
+### 질문에 대한 답
+1. R4 폴백 정책 변경 여부 => 잘못된 risk_level 입력 시 400 Bad Request를 통한 명시적 오류 반환으로의 변경을 권장
+2. R2 소문자 허용 여부: 정규화(Normalization) 공식화 권장. "high" → HIGH로 변환하는 대소문자 무시(Case-insensitive) 정규화를 허용하고 이를 스펙에 문서화하는 것을 권장.
+3. AlgorithmFeignInterceptor는 별도의 단위 테스트 파일로 분리하여 관리

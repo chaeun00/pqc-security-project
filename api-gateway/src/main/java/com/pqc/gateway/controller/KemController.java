@@ -1,6 +1,7 @@
 package com.pqc.gateway.controller;
 
 import com.pqc.gateway.client.CryptoEngineClient;
+import com.pqc.gateway.config.CryptoAlgorithmProperties;
 import com.pqc.gateway.dto.KemDecryptRequest;
 import com.pqc.gateway.dto.KemDecryptResponse;
 import com.pqc.gateway.dto.KemEncryptRequest;
@@ -18,19 +19,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class KemController {
 
     private final CryptoEngineClient cryptoEngineClient;
+    private final CryptoAlgorithmProperties algorithmProperties;
 
-    public KemController(CryptoEngineClient cryptoEngineClient) {
+    public KemController(CryptoEngineClient cryptoEngineClient, CryptoAlgorithmProperties algorithmProperties) {
         this.cryptoEngineClient = cryptoEngineClient;
+        this.algorithmProperties = algorithmProperties;
     }
 
     @PostMapping("/init")
     public ResponseEntity<KemInitResponse> init() {
-        return ResponseEntity.ok(cryptoEngineClient.kemInit());
+        return ResponseEntity.ok(cryptoEngineClient.kemInit(algorithmProperties.getKemId()));
     }
 
     @PostMapping("/encrypt")
     public ResponseEntity<KemEncryptResponse> encrypt(@Valid @RequestBody KemEncryptRequest request) {
-        return ResponseEntity.ok(cryptoEngineClient.kemEncrypt(request));
+        return ResponseEntity.ok(cryptoEngineClient.kemEncrypt(algorithmProperties.getKemId(), "NONE", request));
     }
 
     @PostMapping("/decrypt")

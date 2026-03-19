@@ -52,12 +52,12 @@ public class CryptoEngineClientFallbackFactory implements FallbackFactory<Crypto
             }
 
             @Override
-            public KemInitResponse kemInit() {
+            public KemInitResponse kemInit(String kemAlgorithmId) {
                 throw resolve();
             }
 
             @Override
-            public KemEncryptResponse kemEncrypt(KemEncryptRequest request) {
+            public KemEncryptResponse kemEncrypt(String kemAlgorithmId, String riskLevel, KemEncryptRequest request) {
                 throw resolve();
             }
 

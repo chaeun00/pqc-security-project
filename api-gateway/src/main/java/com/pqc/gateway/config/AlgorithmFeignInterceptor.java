@@ -18,7 +18,10 @@ public class AlgorithmFeignInterceptor implements RequestInterceptor {
 
     @Override
     public void apply(RequestTemplate template) {
-        template.header("X-Kem-Algorithm-Id", algorithmProperties.getKemId());
+        // per-request @RequestHeader 우선 — 이미 설정된 경우 env-var 기본값으로 덮어쓰지 않음
+        if (!template.headers().containsKey("X-Kem-Algorithm-Id")) {
+            template.header("X-Kem-Algorithm-Id", algorithmProperties.getKemId());
+        }
         template.header("X-Dsa-Algorithm-Id", algorithmProperties.getDsaId());
     }
 }

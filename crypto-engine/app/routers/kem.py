@@ -53,14 +53,22 @@ def _derive_aes_key(shared_secret: bytes) -> bytes:
     return hkdf.derive(shared_secret)
 
 
-def _cbom_insert(cur, algorithm_id: str, event: str, key_id: int) -> None:
-    """cbom_assets 삽입 (Transactional — 실패 시 외부 트랜잭션 롤백)."""
+_VALID_RISK_LEVELS = frozenset({"HIGH", "MEDIUM", "LOW", "NONE"})
+
+
+def _cbom_insert(cur, algorithm_id: str, event: str, key_id: int, risk_level: str = "NONE") -> None:
+    """cbom_assets 삽입 (Transactional — 실패 시 외부 트랜잭션 롤백).
+    risk_level: X-Risk-Level 헤더 값 (Day 9 SNDL 라우팅) — 허용 목록 외 값은 'NONE' 처리.
+    """
+    safe_risk = risk_level.strip().upper() if risk_level else "NONE"
+    if safe_risk not in _VALID_RISK_LEVELS:
+        safe_risk = "NONE"
     cur.execute(
         """
         INSERT INTO cbom_assets (algorithm_id, asset, source, risk_level)
-        VALUES (%s, %s, 'auto', 'NONE')
+        VALUES (%s, %s, 'auto', %s)
         """,
-        (algorithm_id, json.dumps({"event": event, "key_id": key_id})),
+        (algorithm_id, json.dumps({"event": event, "key_id": key_id}), safe_risk),
     )
 
 
@@ -102,7 +110,11 @@ def kem_init(x_kem_algorithm_id: Optional[str] = Header(default=None)):
 
 
 @router.post("/encrypt", response_model=KemEncryptResponse)
-def kem_encrypt(req: KemEncryptRequest, x_kem_algorithm_id: Optional[str] = Header(default=None)):
+def kem_encrypt(
+    req: KemEncryptRequest,
+    x_kem_algorithm_id: Optional[str] = Header(default=None),
+    x_risk_level: Optional[str] = Header(default=None),
+):
     """하이브리드 암호화: DB 공개키 조회 → KEM encap → HKDF → AES-256-GCM(plaintext).
     알고리즘은 DB의 key algorithm_id 기준 (kem_decrypt와 대칭).
     X-Kem-Algorithm-Id 헤더가 있고 DB algorithm_id와 불일치하면 400 반환.
@@ -149,10 +161,10 @@ def kem_encrypt(req: KemEncryptRequest, x_kem_algorithm_id: Optional[str] = Head
     aes_iv = os.urandom(12)
     aes_ciphertext = AESGCM(aes_key).encrypt(aes_iv, plaintext_bytes, None)
 
-    # 3단계: CBOM INSERT (Transactional — 실패 시 503)
+    # 3단계: CBOM INSERT (Transactional — 실패 시 503) — X-Risk-Level 헤더로 risk_level 기록
     try:
         with db_cursor() as (conn, cur):
-            _cbom_insert(cur, stored_algorithm, "encrypt", req.key_id)
+            _cbom_insert(cur, stored_algorithm, "encrypt", req.key_id, risk_level=x_risk_level or "NONE")
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"DB 오류: {exc}") from exc
 
