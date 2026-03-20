@@ -1,5 +1,6 @@
 package com.pqc.gateway.config;
 
+import com.pqc.gateway.service.AlgorithmHotSwapService;
 import feign.RequestTemplate;
 import org.junit.jupiter.api.Test;
 
@@ -11,7 +12,7 @@ class AlgorithmFeignInterceptorTest {
         CryptoAlgorithmProperties props = new CryptoAlgorithmProperties();
         props.setKemId(kemId);
         props.setDsaId(dsaId);
-        return new AlgorithmFeignInterceptor(props);
+        return new AlgorithmFeignInterceptor(new AlgorithmHotSwapService(props));
     }
 
     // 헤더 미설정 → env-var 기본값으로 KEM·DSA 모두 주입

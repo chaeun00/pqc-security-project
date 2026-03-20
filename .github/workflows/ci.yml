@@ -1116,3 +1116,91 @@ jobs:
           assert r['algorithm'] == 'ML-KEM-512', f'FAIL: algorithm={r[\"algorithm\"]}'
           print('PASS: no-header -> DB algorithm_id(ML-KEM-512) 200')
           "
+
+      - name: "[Day10-AC1] cbom_assets.algorithm_id = ML-KEM-512 DB assertion"
+        run: |
+          COUNT=$(docker compose exec -T db psql -U pqc -d pqc_db -t -c \
+            "SELECT COUNT(*) FROM cbom_assets WHERE algorithm_id = 'ML-KEM-512';" \
+            | tr -d ' ')
+          echo "cbom_assets ML-KEM-512 rows: $COUNT"
+          python3 -c "
+          count = int('$COUNT')
+          assert count > 0, f'FAIL: cbom_assets에 ML-KEM-512 이력 없음 (count={count})'
+          print(f'PASS ✓ — cbom_assets.algorithm_id=ML-KEM-512 전환 이력 확인 ({count} rows)')
+          " || exit 1
+
+      - name: "[Day10-R1] AlgorithmAdminEndpoint 포트 8081 노출 확인 (GET /actuator/algorithm)"
+        run: |
+          RESP=$(docker compose exec -T api-gateway \
+            curl -sf http://localhost:8081/actuator/algorithm)
+          echo "GET /actuator/algorithm: $RESP"
+          python3 -c "
+          import json
+          r = json.loads('$RESP')
+          assert 'kemId' in r and 'dsaId' in r, f'FAIL: 필드 누락 — {r}'
+          print(f'PASS ✓ — 포트 8081 AlgorithmAdminEndpoint 정상 응답: kemId={r[\"kemId\"]}, dsaId={r[\"dsaId\"]}')
+          " || exit 1
+
+      - name: "[Day10-R1] Hot-swap — ML-KEM-512 → ML-KEM-768 (재기동 없음)"
+        run: |
+          # 컨테이너 내부에서 management 포트(8081) 호출 — 외부 미노출 포트 (보안 설계)
+          RESP=$(docker compose exec -T api-gateway \
+            curl -sf -X POST http://localhost:8081/actuator/algorithm \
+            -H "Content-Type: application/json" \
+            -d '{"kemId":"ML-KEM-768"}')
+          echo "Hot-swap response: $RESP"
+          python3 -c "
+          import json
+          r = json.loads('$RESP')
+          assert r.get('kemId') == 'ML-KEM-768', f'FAIL: kemId={r.get(\"kemId\")}'
+          print('PASS ✓ — Hot-swap admin API: ML-KEM-512 → ML-KEM-768 전환 확인')
+          " || exit 1
+
+      - name: "[Day10-R1] Hot-swap 적용 후 /api/encrypt → algorithm: ML-KEM-768 확인"
+        run: |
+          PLAIN=$(python3 -c "import base64; print(base64.b64encode(b'hotswap-verify').decode())")
+          RESP=$(curl -sf -X POST http://localhost:8080/api/encrypt \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"plaintext\":\"$PLAIN\"}")
+          echo "$RESP"
+          python3 -c "
+          import json, sys
+          r = json.loads('$RESP')
+          assert r.get('algorithm') == 'ML-KEM-768', \
+            f'FAIL: Hot-swap 미적용 — algorithm={r.get(\"algorithm\")}'
+          print('PASS ✓ — 재기동 없이 Hot-swap 후 /api/encrypt algorithm=ML-KEM-768 확인')
+          " || exit 1
+
+      - name: "[Day10-R1] Hot-swap 불허용 값 → 400 확인"
+        run: |
+          STATUS=$(docker compose exec -T api-gateway \
+            curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8081/actuator/algorithm \
+            -H "Content-Type: application/json" \
+            -d '{"kemId":"RSA-2048"}')
+          echo "불허용 알고리즘 응답 코드: $STATUS"
+          [ "$STATUS" = "400" ] && echo "PASS ✓ — 불허용 값 → 400 정상 거부" || \
+            (echo "FAIL: 기대 400, 실제 $STATUS"; exit 1)
+
+  # ── Phase 2 Gate (Day 10 — AC2) ─────────────────────────────
+  phase2-complete:
+    name: "Phase 2 완료 Gate — 전체 잡 집약"
+    runs-on: ubuntu-latest
+    needs:
+      - trivy
+      - build-and-trivy
+      - api-gateway-build
+      - unit-test
+      - stack-integration-test
+      - auth-integration-test
+      - sndl-routing-test
+      - algorithm-agility-test
+      - compose-integration
+    steps:
+      - name: Phase 2 모든 잡 통과 확인
+        run: |
+          echo "✅ Phase 2 전체 잡 green — phase2-complete gate 통과"
+          echo "포함 잡: trivy, build-and-trivy, api-gateway-build, unit-test,"
+          echo "         stack-integration-test, auth-integration-test,"
+          echo "         sndl-routing-test, algorithm-agility-test, compose-integration"

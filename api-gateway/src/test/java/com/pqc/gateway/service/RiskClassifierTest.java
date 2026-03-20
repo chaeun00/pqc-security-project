@@ -12,7 +12,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RiskClassifierTest {
 
-    private final RiskClassifier classifier = new RiskClassifier(new CryptoAlgorithmProperties());
+    private final RiskClassifier classifier =
+            new RiskClassifier(new AlgorithmHotSwapService(new CryptoAlgorithmProperties()));
 
     @Test
     void classify_nullRiskLevel_returnsMedium() {

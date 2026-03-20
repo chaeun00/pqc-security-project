@@ -2346,3 +2346,91 @@ startup 중 crash → start_period 이전에 container exit → Docker가 즉시
 1. api-gateway unhealthy 오류 미발생
 2. 3개 E2E 잡 green
 3. 기존 통과 잡 유지
+
+---
+
+## Day 10 (2026-03-20) 세부 계획 — Phase 2 완성 + CI 전체 검증
+
+### 목표
+Day 9까지 구현된 코드의 미검증 항목(관건 4 CBOM 전환 이력·Hot-swap 범위 결정)과
+미결 항목(관건 8 기술 결정·CI gate job·Phase 3 진입 골격)을 완결하여
+Phase 2를 공식 종료하고 Phase 3 착수 조건을 충족한다.
+
+### 질문에 대한 답
+1. Hot-swap 범위:  "재기동 없는 Runtime API 전환"을 Phase 2 인수조건의 일부로 포함한다
+2. CBOM 이력 검증: algorithm-agility-test CI에서 "ML-KEM-768 기동 → ML-KEM-512 전환 후 cbom_assets.algorithm_id 변경 여부"를 DB 쿼리로 검증한다.
+3. TanStack Query + Zustand 결정 문서 형식: 기술 선택 근거를 docs/adr/ (Architecture Decision Record) 형식으로 작성한다.
+
+### 범위
+
+#### Step 1 — [관건 4] CBOM 전환 이력 CI assertion 추가 + Hot-swap 이관 확정
+- algorithm-agility-test 잡: ML-KEM-512 전환 후 cbom_assets.algorithm_id DB 검증 step
+- Hot-swap: Phase 2 외 공식 이관 결정 시 plan.md 반영
+- Phase 2 AC3 체크리스트 업데이트
+
+#### Step 2 — CI Phase 2 gate job (phase2-complete) 추가
+- needs: 모든 Phase 2 잡 집약 (trivy, build-and-trivy, api-gateway-build,
+  unit-test, stack-integration-test, auth-integration-test,
+  sndl-routing-test, algorithm-agility-test, compose-integration)
+
+#### Step 3 — [관건 8] TanStack Query + Zustand 결정 + Phase 3 진입 계획
+- 기술 결정 문서 작성 (TanStack Query vs SWR, Zustand vs Redux Toolkit)
+- Phase 3 React 프로젝트 초기화 범위 정의 (Vite + React 18 + TS + TQ + Zustand)
+
+### 인수조건
+1. algorithm-agility-test: CBOM DB assertion green (ML-KEM-512 전환 이력 확인)
+2. phase2-complete gate 잡: 전체 Phase 2 잡 단일 집약 확인
+3. TanStack Query + Zustand 결정 + Phase 3 진입 범위 docs/ 문서화 완료
+
+---
+
+## Day 10 수정 계획 (2026-03-20) — Phase 2 완성 + Hot-swap 미구현 확인
+
+### 질문에 대한 답
+1. Hot-swap 구현 방식: Admin REST API + AtomicReference 추천. spring-cloud-starter-config와 같은 무거운 의존성을 추가하지 않고도 목적을 달성.
+2. Hot-swap 롤백 정책: "전환 완료 후 신규 요청부터 적용". 데이터 정합성과 서비스 안정성이 최우선.
+3. R1 Feign 버전 의존 문서화: ADR(Architecture Decision Record) 작성 추천
+
+### 변경 요약
+- Day 9 R2/R3/R4/T1/T2/T3/T4 전원 해소 확인 (코드·CI 교차 검증)
+- R1(Feign 버전 의존) 부분 해소 — 테스트 추가됐으나 위험 미문서화
+- Hot-swap: plan.md에 Phase 2 포함 결정됐으나 구현 없음 확인 (@RefreshScope·Admin API 부재)
+
+### 위험 요소 및 엣지 케이스
+- R1: Hot-swap 미구현 — CryptoAlgorithmProperties 기동 시 고정 바인딩 (HIGH)
+- R2: algorithm-agility-test CBOM algorithm_id DB assertion 공백 (MEDIUM)
+- R3: CI phase2-complete gate 잡 미존재 (MEDIUM)
+- R4: Hot-swap + ThreadLocal per-request 오버라이드 경합 가능 (LOW)
+
+### 테스트 공백
+- T1: algorithm-agility-test에 cbom_assets.algorithm_id DB 검증 step 없음
+- T2: Hot-swap Admin API 테스트 — 구현 전 작성 불가
+
+### 수정 제안
+1. AlgorithmAdminController (POST /admin/algorithm, 포트 8081) — AtomicReference 기반 Runtime 전환
+2. algorithm-agility-test 잡: Hot-swap 후 CBOM DB assertion step 추가
+3. phase2-complete gate job 추가 (ci.yml 최하단)
+4. docs/adr/0001-tanstack-query-zustand.md 작성
+
+---
+
+## Day 10 수정 계획 리뷰 타당성 검증 (2026-03-20)
+
+### 질문에 대한 답
+1. phase3-scope.md 수정: "Phase 2 구현 완료"로 정정
+2. AlgorithmAdminEndpoint CI 노출 검증: curl 확인 Step 추가. CI 환경(Runner)에서 8081 포트가 정상적으로 바인딩되어 응답하는지 확인. 메인 서비스 포트(8080)와 관리용 포트(8081)가 명확히 분리되어 동작하는지 curl로 찔러보는 것만으로도 런타임 오류를 조기에 잡을 수 있음.
+3. T3 동시성: CountDownLatch 기반 테스트 추가
+
+### 타당성 판정 요약
+- 🔴 phase3-scope.md 불일치: **타당 → Step 2 수정**
+- 🟡 무인증 endpoint: **조건부 허용 — 현재 설계 범위 내**
+- 🟡 shell injection: **낮음 — 선택적 수정**
+- 🟡 untracked 3개 파일: **타당 + 긴급 → Step 1 즉시 스테이징**
+- T1 AlgorithmAdminEndpoint 단위 테스트: **타당 → Step 3 추가**
+- T2 DSA hot-swap CI: **낮음 — Phase 2 스코프 외**
+- T3 동시성 테스트: **부분 타당 — AtomicReference 자체 안전, 문서화로 갈음**
+
+### 수정 계획 AC
+1. untracked 3개 파일 git add + 스테이징 확인
+2. phase3-scope.md Hot-swap 섹션 "Phase 2 구현 완료"로 정정
+3. AlgorithmAdminEndpointTest 5개 케이스 추가 + ./gradlew test 통과
