@@ -2434,3 +2434,48 @@ Phase 2를 공식 종료하고 Phase 3 착수 조건을 충족한다.
 1. untracked 3개 파일 git add + 스테이징 확인
 2. phase3-scope.md Hot-swap 섹션 "Phase 2 구현 완료"로 정정
 3. AlgorithmAdminEndpointTest 5개 케이스 추가 + ./gradlew test 통과
+---
+
+## Phase 3 — 일간 계획 (Day 11–20, Week 5–6)
+
+### Day 11 — 프로젝트 초기화 & 상태 관리 구성
+- Vite scaffold (`crypto-dashboard/`), 의존성 추가
+- TanStack Query QueryClient 설정 + Zustand store 초기 정의
+- API 클라이언트 레이어(`src/api/`) 골격, 라우팅(`/login`, `/dashboard`, `/cbom`)
+- **인수조건:** `npm run dev` 기동, `useEncrypt` hook 컴포넌트 1개, `selectedAlgorithm` store 정의
+
+### Day 12 — 인증 & 공통 레이아웃
+- JWT 로그인, 401 자동 갱신, Protected Route, Sidebar+Header 레이아웃
+- **인수조건:** 미인증 403 리다이렉트, 로그인 후 `/dashboard` 진입
+
+### Day 13 — CBOM 목록 시각화
+- `useCbomList` hook, 테이블 컴포넌트, 알고리즘 필터, 페이지네이션
+- **인수조건:** 목록 정상 렌더링, 필터 동작, DevTools 캐시 키 확인
+
+### Day 14 — 우선순위 뷰 & 알고리즘 전환 UI
+- High-Risk 우선순위 카드 그룹핑, hot-swap UI (`POST /actuator/algorithm`), `useMutation` + invalidateQueries
+- **인수조건:** 전환 후 CBOM 자동 갱신, 불허용 알고리즘 UI 차단
+
+### Day 15 — 수동 재고(Inventory) 등록 UI
+- 등록 폼, 편집 모달, 삭제 confirm, optimistic update
+- **인수조건:** CRUD 전 동작, 필수 필드 유효성 검사
+
+### Day 16 — 실시간 모니터링 UI
+- `refetchInterval: 5000`, 통계 카드, 알고리즘별 사용량 차트, 최근 이력 테이블
+- **인수조건:** 5s 자동 갱신, 오류 시 배지 표시
+
+### Day 17 — Prometheus/Grafana 알람 연동
+- `docker-compose.yml` 서비스 추가, scrape 설정, Grafana 프로비저닝, 알람 규칙
+- **인수조건:** Grafana 접근, Prometheus up==1, 알람 규칙 1개 이상
+
+### Day 18 — 컴포넌트 테스트 & E2E
+- Vitest + RTL, Playwright E2E (로그인→CBOM→등록→전환), MSW mock
+- **인수조건:** 커버리지 70%+, E2E 2개 이상 통과, `npm run build` 성공
+
+### Day 19 — CI 파이프라인 통합
+- `frontend-ci` 잡 (lint/test/build), Trivy Critical 0건, node_modules 캐시
+- **인수조건:** PR 시 frontend-ci 자동 실행, 전체 CI 그린
+
+### Day 20 — Phase 3 최종 검증 & 문서화
+- 인수조건 체크리스트, `make test-dct`, 환경변수 교체 기동 테스트, docs 업데이트
+- **인수조건:** plan.md 인수조건 3개 전체 통과
