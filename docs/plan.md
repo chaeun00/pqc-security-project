@@ -2450,6 +2450,7 @@ Phase 2를 공식 종료하고 Phase 3 착수 조건을 충족한다.
 
 ### Day 13 — CBOM 목록 시각화
 - `useCbomList` hook, 테이블 컴포넌트, 알고리즘 필터, 페이지네이션
+- Day 11의 MSW를 CBOM 백엔드 API(GET /api/cbom)로 실제 연동
 - **인수조건:** 목록 정상 렌더링, 필터 동작, DevTools 캐시 키 확인
 
 ### Day 14 — 우선순위 뷰 & 알고리즘 전환 UI
@@ -2479,3 +2480,176 @@ Phase 2를 공식 종료하고 Phase 3 착수 조건을 충족한다.
 ### Day 20 — Phase 3 최종 검증 & 문서화
 - 인수조건 체크리스트, `make test-dct`, 환경변수 교체 기동 테스트, docs 업데이트
 - **인수조건:** plan.md 인수조건 3개 전체 통과
+
+---
+
+## Day 11 — 프로젝트 초기화 & 상태 관리 구성
+
+### 목표
+기존 dashboard/ 골격 위에 Vite + React 18 + TypeScript를 초기화하고,
+TanStack Query / Zustand / react-router-dom 레이어와 API 클라이언트 골격을 완성한다.
+
+### 질문에 대한 답
+1. dashboard/src/features/ 하위에 이미 auth/, cbom/, inventory/, monitor/ 디렉토리가 있습니다. 이 구조를 그대로 유지하면 되나요? => 유지 권장
+2. JWT 토큰을 메모리(Zustand)에만 저장할까요, 아니면 sessionStorage에 함께 저장해도 되나요? (XSS 리스크 vs 새로고침 유지) => Access Token은 메모리에만 두고 Refresh Token을 HttpOnly 쿠키로 받아 자동 로그인을 구현
+3. CBOM 백엔드 API(GET /api/cbom)가 아직 없는데? => Day 11에 MSW를 도입하고 Day 13에 교체
+
+### Step 1 — Vite scaffold + 의존성 설치
+
+**목표:** package.json, vite.config.ts, tsconfig.json, tailwind.config.ts 생성
+
+\`\`\`bash
+cd dashboard
+npm create vite@latest . -- --template react-ts
+mkdir -p src/features/{auth,cbom,inventory,monitor,dashboard}
+npm install @tanstack/react-query@^5 @tanstack/react-query-devtools@^5 zustand@^4 react-router-dom@^6 axios@^1
+npm install -D tailwindcss@^3 postcss autoprefixer @types/node
+npx tailwindcss init -p
+\`\`\`
+
+**인수조건:**
+- [ ] node_modules/ 설치 완료
+- [ ] tailwind.config.ts, postcss.config.js 생성됨
+- [ ] src/features/{auth,cbom,inventory,monitor,dashboard}/ 디렉토리 존재
+
+### Step 2 — vite.config.ts + tsconfig.json 설정
+
+**목표:** /api proxy(→ localhost:8080), @ path alias 설정
+
+**vite.config.ts 핵심 설정:**
+\`\`\`ts
+server: {
+  proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } }
+},
+resolve: { alias: { '@': '/src' } }
+\`\`\`
+
+**tsconfig.json 핵심 설정:**
+\`\`\`json
+"paths": { "@/*": ["./src/*"] }
+\`\`\`
+
+**인수조건:**
+- [ ] npm run dev 실행 시 /api 요청이 8080으로 프록시됨
+- [ ] @/ 경로로 import 가능
+
+### Step 3 — src/lib/ (QueryClient + Axios 인스턴스)
+
+**목표:** 전역 QueryClient 옵션 설정, JWT 자동 주입 Axios 인스턴스 생성
+
+**생성 파일:**
+- src/lib/queryClient.ts — staleTime: 30s, gcTime: 5min, retry: 1, refetchOnWindowFocus: false
+- src/lib/axiosClient.ts — baseURL: import.meta.env.VITE_API_BASE_URL, 요청 인터셉터로 Zustand token → Authorization: Bearer 주입
+
+**인수조건:**
+- [ ] QueryClient 옵션 4개 명시적 설정 완료
+- [ ] axiosClient가 Zustand store에서 token을 읽어 헤더에 주입
+
+### Step 4 — src/store/useAppStore.ts (Zustand)
+
+**목표:** 인증 토큰과 선택된 알고리즘을 전역 상태로 관리
+
+**상태 정의:**
+| 상태 | 타입 | 초기값 |
+|------|------|--------|
+| token | string \| null | null |
+| selectedAlgorithm | string | "ML-KEM-768" |
+| setToken | (t: string) => void | — |
+| clearToken | () => void | — |
+| setSelectedAlgorithm | (a: string) => void | — |
+
+**인수조건:**
+- [ ] 브라우저 콘솔: useAppStore.getState().selectedAlgorithm === "ML-KEM-768"
+- [ ] setToken → token 갱신, clearToken → null 복귀 동작
+
+### Step 5 — src/api/ (API 클라이언트 레이어)
+
+**목표:** 백엔드 실제 스펙 기반 타입 정의 + axios 호출 함수 작성
+
+**src/api/auth.ts**
+\`\`\`
+POST /api/auth/login
+Body:     { userId: string; password: string }
+Response: { token: string }
+\`\`\`
+
+**src/api/encrypt.ts**
+\`\`\`
+POST /api/encrypt
+Body:     { plaintext: string; risk_level?: string }
+Response: { key_id: number; algorithm: string; kem_ciphertext: string;
+            aes_ciphertext: string; aes_iv: string; risk_level: string }
+\`\`\`
+
+**src/api/cbom.ts**
+\`\`\`
+GET /api/cbom  ← 백엔드 미구현 (Day 13 연동), Day 11은 타입 정의만
+type CbomEntry = { id: number; algorithm: string; type: string;
+                   risk_level: string; registered_at: string; note?: string }
+\`\`\`
+
+**인수조건:**
+- [ ] 3개 파일 타입 오류 없이 tsc 통과
+- [ ] encrypt API 함수가 axiosClient 사용
+
+### Step 6 — 라우팅 + main.tsx + DashboardPage (인수조건 핵심)
+
+**목표:** 라우트 골격 완성, DashboardPage에서 POST /api/encrypt 실제 호출 확인
+
+**src/App.tsx 라우트:**
+| 경로 | 컴포넌트 |
+|------|---------|
+| /login | LoginPage (빈 페이지) |
+| /dashboard | DashboardPage ★ |
+| /cbom | CbomPage (빈 페이지) |
+| /inventory | InventoryPage (빈 페이지) |
+| /monitor | MonitorPage (빈 페이지) |
+| / | redirect → /dashboard |
+
+**src/main.tsx:** QueryClientProvider → RouterProvider, ReactQueryDevtools(개발 환경)
+
+**src/features/dashboard/DashboardPage.tsx:**
+- plaintext 텍스트 입력 + 암호화 버튼
+- useMutation으로 POST /api/encrypt 호출
+- 결과(algorithm, risk_level, key_id) 화면 출력
+- 로딩 스피너, 오류 메시지 처리
+
+**인수조건:**
+- [ ] npm run dev → /dashboard 에서 텍스트 입력 후 암호화 버튼 클릭 → 결과 JSON 표시
+- [ ] TanStack Query DevTools 패널에서 mutation 상태 확인 가능
+
+### Step 7 — Dockerfile + nginx.conf 완성
+
+**목표:** builder 스테이지 TODO 제거, SPA 라우팅 + /api proxy 지원 nginx 설정
+
+**dashboard/Dockerfile builder 스테이지:**
+\`\`\`dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:1.27-alpine AS runtime
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+USER nginx
+EXPOSE 3000
+\`\`\`
+
+**dashboard/nginx.conf 핵심:**
+- listen 3000
+- try_files $uri /index.html (SPA 라우팅)
+- location /api → proxy_pass http://api-gateway:8080
+
+**인수조건:**
+- [ ] docker compose build dashboard 오류 없이 완료
+- [ ] npm run build dist/ 생성 확인
+
+
+### Day 11 최종 인수조건
+
+1. npm run dev 기동 + /dashboard에서 POST /api/encrypt 결과 화면 표시
+2. 브라우저 콘솔 useAppStore.getState().selectedAlgorithm === "ML-KEM-768" 확인
+3. npm run build 타입 오류 없이 성공 + docker compose build dashboard 통과
