@@ -2436,7 +2436,7 @@ Phase 2를 공식 종료하고 Phase 3 착수 조건을 충족한다.
 3. AlgorithmAdminEndpointTest 5개 케이스 추가 + ./gradlew test 통과
 ---
 
-## Phase 3 — 일간 계획 (Day 11–20, Week 5–6)
+## Phase 3 — React CBOM 대시보드 일간 계획 (Day 11–20, Week 5–6)
 
 ### Day 11 — 프로젝트 초기화 & 상태 관리 구성
 - Vite scaffold (`crypto-dashboard/`), 의존성 추가
@@ -2653,3 +2653,30 @@ EXPOSE 3000
 1. npm run dev 기동 + /dashboard에서 POST /api/encrypt 결과 화면 표시
 2. 브라우저 콘솔 useAppStore.getState().selectedAlgorithm === "ML-KEM-768" 확인
 3. npm run build 타입 오류 없이 성공 + docker compose build dashboard 통과
+
+---
+
+## Day 12 — 인증 & 공통 레이아웃 세부 계획
+
+### 질문에 대한 답
+1. Refresh Token 순환 (HttpOnly) vs 단순 로그아웃 => Day 12에 Refresh Token 순환(HttpOnly 쿠키) 구조를 포함하는 것을 추천.
+2. AppLayout Sidebar 네비게이션: 아이콘 라이브러리 vs 텍스트 => lucide-react와 같은 가벼운 아이콘 라이브러리를 추가하는 것을 추천
+3. MSW 핸들러 정의 범위 => Day 12는 /api/auth/login과 /api/encrypt만 작성하여 범위를 제한하는 것을 추천합니다.
+
+### 목표
+axiosClient 401 인터셉터·MSW·PrivateRoute·AppLayout·LoginPage를 구현하여
+미인증 리다이렉트와 api-gateway 미연동 환경 안정성을 확보한다.
+
+### Step 요약
+1. MSW 도입 + /api/auth/login, /api/encrypt 핸들러 (AC#1 위험 해소)
+2. axiosClient response 401 인터셉터 → clearToken + /login (위험요소 해소)
+3. PrivateRoute — token null → /login 리다이렉트
+4. AppLayout — Sidebar(4 NavLink) + Header(로그아웃) + Outlet
+5. LoginPage — useMutation + MSW mock 로그인
+6. App.tsx 라우터 재구성 — PrivateRoute > AppLayout > protected routes
+7. Vitest 단위 테스트 3개 (PrivateRoute / LoginPage / axiosClient 401)
+
+### 최종 인수조건
+1. 미인증 /dashboard → /login 리다이렉트
+2. MSW 로그인 성공 → /dashboard + token !== null
+3. 401 응답 → clearToken 호출 (vitest 검증)

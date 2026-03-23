@@ -1183,6 +1183,36 @@ jobs:
           [ "$STATUS" = "400" ] && echo "PASS ✓ — 불허용 값 → 400 정상 거부" || \
             (echo "FAIL: 기대 400, 실제 $STATUS"; exit 1)
 
+  # ── Phase 3 Day 11 ────────────────────────────────────────────
+  dashboard-build:
+    name: "[Day11] Dashboard 빌드 검증 (tsc + vite build)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+      - name: "[Day11-AC3] npm ci"
+        working-directory: dashboard
+        run: npm ci
+      - name: "[Day11-AC3] tsc --noEmit + vite build"
+        working-directory: dashboard
+        run: npm run build
+
+  dashboard-docker-build:
+    name: "[Day11] Dashboard Docker 빌드 검증"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+      - name: ".env 파일 생성"
+        run: cp .env.example .env
+      - name: "[Day11-AC3] docker compose build dashboard"
+        run: docker compose build dashboard
+
   # ── Phase 2 Gate (Day 10 — AC2) ─────────────────────────────
   phase2-complete:
     name: "Phase 2 완료 Gate — 전체 잡 집약"
