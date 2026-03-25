@@ -2732,3 +2732,25 @@ MSW 기반으로 목록 렌더링과 TanStack Query 캐시 키를 검증한다.
 1. /cbom 목록 10건 렌더링 + 알고리즘 필터 동작
 2. DevTools 캐시 키 ['cbom'] 확인
 3. npm run test 전체 통과
+
+---
+
+## Day 13 보안 취약점 & 테스트 공백 수정 계획 (2026-03-25)
+
+### 질문에 대한 답
+1. registered_at 필드명은 백엔드 API 스펙 기준으로 확정된 이름인가, 아니면 created_at으로 변경 가능성이 있는가? (필드명 통일 전략 결정에 필요) => registered_at을 프론트엔드 표준으로 확정하고, 백엔드 DTO에서 alias 처리
+2. Authorization 헤더 검증은 MSW 핸들러 레벨에서 검증하는 것으로 충분한가, 아니면 axiosClient 단위 테스트에 추가해야 하는가? => axiosClient 단위 테스트에 추가. MSW 핸들러 검증은 보조 수단.
+3. CbomPage 컴포넌트 테스트는 기존 useCbomList.test.tsx와 같은 파일로 합칠까, 별도 CbomPage.test.tsx로 분리할까? => 별도 CbomPage.test.tsx로 분리
+
+### 목표
+Day 13 리뷰 타당 항목(보안 3건 + 테스트 5건) 수정으로 CbomPage 런타임 안정성 및 테스트 커버리지 확보
+
+### 범위
+- Step A: CbomPage.tsx RISK_BADGE fallback 스타일 + registered_at null 방어 + cbom.ts JSDoc 추가
+- Step B: CbomPage.test.tsx 신규 — 필터/빈배열/isLoading/isError/RISK_BADGE 케이스
+- Step C: Authorization 헤더 검증 — handlers.ts 401 시나리오 + useCbomList.test.tsx 케이스 추가
+
+### 인수조건
+1. risk_level UNKNOWN 입력 시 기본 배지 스타일 렌더링 (TypeError 없음)
+2. registered_at null/undefined 시 '—' 표시 (TypeError 없음)
+3. npm test 전체 green (CbomPage.test.tsx 포함)
