@@ -2754,3 +2754,31 @@ Day 13 리뷰 타당 항목(보안 3건 + 테스트 5건) 수정으로 CbomPage 
 1. risk_level UNKNOWN 입력 시 기본 배지 스타일 렌더링 (TypeError 없음)
 2. registered_at null/undefined 시 '—' 표시 (TypeError 없음)
 3. npm test 전체 green (CbomPage.test.tsx 포함)
+
+## Day 14 세부 계획 — 우선순위 뷰 & 알고리즘 전환 UI (2026-03-25)
+
+### 목표
+CbomPage에 위험도별 우선순위 카드 뷰와 알고리즘 hot-swap 패널 추가.
+High-Risk 자산 즉시 식별 + 허용 알고리즘으로만 전환 가능하도록 구현.
+
+### 질문에 대한 답
+1. 우선순위 뷰: 탭 전환 vs 상단 고정 섹션 => 탭 전환 방식으로 결정. HIGH 위험군을 즉시 격리해서 봐야 함. HIGH 탭을 기본 활성. 반면 상단 고정 섹션은 전체를 한 번에 보여줘서 HIGH/MEDIUM/LOW가 섞여 시선이 분산. 
+2. POST /actuator/algorithm body 스펙: { algorithm: string } 단일 필드 여부 => { algorithm: string } 단일 필드 확정, 단 asset_id 포함 권장. 최소 스펙은 아래 2필드: { "asset_id": "uuid", "algorithm": "ML-KEM-768" }. MSW 핸들러도 이 스펙으로 설계하면 백엔드 연동 시 Breaking Change 없이 그대로 이어집니다.
+3. 불허용 알고리즘 목록: 프론트 상수 하드코딩 vs GET API 조회 => 프론트 상수 하드코딩. 단, 프론트 상수는	UI disabled 처리 (UX 가드)	. 백엔드 POST 검증은	실제 허용/거부 강제 역할. GET API 조회 방식은 백엔드에서 allowlist를 서버가 관리할 수 있게 되는 시점에 도입하면 됩니다. 그 전까지 프론트 상수는 "사용자 실수 방지" 용도로만 간주하고, 보안 강제 수단으로 오해하지 않도록 코드 주석에 명시해두세요.
+```
+// UX guard only — NOT a security boundary.
+// Server-side validation is required in POST /actuator/algorithm handler.
+export const ALLOWED_ALGORITHMS = ['ML-KEM-512', 'ML-KEM-768', 'ML-DSA-44'];
+```
+
+### 범위
+- Step A: CbomPriorityView.tsx 신규 + CbomPage.tsx 탭 전환 추가
+- Step B: api/algorithm.ts + useAlgorithmSwitch.ts + AlgorithmSwitchPanel.tsx 신규
+  - ALLOWED_ALGORITHMS 상수 (ML-KEM/ML-DSA 계열)
+  - 불허용 선택 시 버튼 disabled + MSW handler 추가
+- Step C: CbomPriorityView.test.tsx + useAlgorithmSwitch.test.tsx 신규
+
+### 인수조건
+1. 우선순위 뷰 탭 — HIGH/MEDIUM/LOW 카드 그룹 렌더링 + 건수 정확
+2. 불허용 알고리즘 선택 시 전환 버튼 disabled 유지
+3. 전환 성공 후 queryKey ['cbom'] invalidate → 목록 자동 갱신
