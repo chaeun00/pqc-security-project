@@ -2782,3 +2782,20 @@ export const ALLOWED_ALGORITHMS = ['ML-KEM-512', 'ML-KEM-768', 'ML-DSA-44'];
 1. 우선순위 뷰 탭 — HIGH/MEDIUM/LOW 카드 그룹 렌더링 + 건수 정확
 2. 불허용 알고리즘 선택 시 전환 버튼 disabled 유지
 3. 전환 성공 후 queryKey ['cbom'] invalidate → 목록 자동 갱신
+
+---
+
+## Day 15 계획 — Day 14 리뷰 위험 요소 & 테스트 공백 해소 (2026-03-26)
+
+### 목표
+Day 14 리뷰 지적 4개 항목을 테스트/코드로 확정하여 미검증 경로를 제거한다.
+
+### 범위
+- Step 1: useAlgorithmSwitch 실패 케이스 테스트 추가 (500 오버라이드 → isError)
+- Step 2: AlgorithmSwitchPanel 단위 테스트 파일 신규 작성 (렌더/disabled/성공/실패)
+- Step 3: 뷰탭 전환 시 필터·페이지 동작 명시화 (유지 또는 초기화 결정 후 테스트 고정)
+
+### 인수조건
+- useAlgorithmSwitch 오류 케이스 isError 검증 통과
+- AlgorithmSwitchPanel 4개 케이스 테스트 통과
+- 뷰탭 전환 필터·페이지 동작 테스트로 명시 완료

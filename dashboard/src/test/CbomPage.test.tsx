@@ -84,4 +84,21 @@ describe('CbomPage', () => {
     renderCbom()
     await waitFor(() => expect(screen.getByText('—')).toBeInTheDocument())
   })
+
+  it('뷰탭 전환(목록→우선순위) 시 필터·페이지 상태 유지', async () => {
+    renderCbom()
+    await waitFor(() => expect(screen.getByText('총 10건')).toBeInTheDocument())
+
+    // 필터 적용 (ML-KEM-768, 1건)
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'ML-KEM-768' } })
+    expect(screen.getByText('총 1건')).toBeInTheDocument()
+
+    // 우선순위 탭으로 전환
+    fireEvent.click(screen.getByRole('tab', { name: '우선순위' }))
+    expect(screen.queryByText('총 1건')).not.toBeInTheDocument()
+
+    // 목록 탭으로 복귀 → 필터 유지(1건)
+    fireEvent.click(screen.getByRole('tab', { name: '목록' }))
+    expect(screen.getByText('총 1건')).toBeInTheDocument()
+  })
 })

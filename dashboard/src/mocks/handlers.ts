@@ -30,6 +30,17 @@ export const handlers = [
     return HttpResponse.json({ message: 'Invalid credentials' }, { status: 401 })
   }),
 
+  http.post('/actuator/algorithm', async ({ request }) => {
+    if (!request.headers.get('Authorization')) {
+      return HttpResponse.json({ message: 'Unauthorized' }, { status: 401 })
+    }
+    const body = (await request.json()) as { asset_id: string; algorithm: string }
+    if (!body.asset_id || !body.algorithm) {
+      return HttpResponse.json({ message: 'Bad Request' }, { status: 400 })
+    }
+    return HttpResponse.json({ message: 'Algorithm switched', algorithm: body.algorithm })
+  }),
+
   http.post('/api/encrypt', async ({ request }) => {
     const body = (await request.json()) as { plaintext: string; risk_level?: string }
     return HttpResponse.json({
