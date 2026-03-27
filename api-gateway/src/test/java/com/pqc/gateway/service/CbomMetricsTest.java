@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CbomMetricsTest {
 
@@ -29,5 +30,42 @@ class CbomMetricsTest {
         assertThat(highCounter.count()).isEqualTo(2.0);
         assertThat(mediumCounter).isNotNull();
         assertThat(mediumCounter.count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void recordEncrypt_unknownRiskLevel_registersCounterWithUnknownTag() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CbomMetrics metrics = new CbomMetrics(registry);
+
+        metrics.recordEncrypt("UNKNOWN");
+
+        Counter counter = registry.find("cbom_assets_total")
+                .tag("risk_level", "UNKNOWN")
+                .counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void recordEncrypt_emptyRiskLevel_registersCounterWithEmptyTag() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CbomMetrics metrics = new CbomMetrics(registry);
+
+        metrics.recordEncrypt("");
+
+        Counter counter = registry.find("cbom_assets_total")
+                .tag("risk_level", "")
+                .counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void recordEncrypt_nullRiskLevel_throwsException() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CbomMetrics metrics = new CbomMetrics(registry);
+
+        assertThatThrownBy(() -> metrics.recordEncrypt(null))
+                .isInstanceOf(NullPointerException.class);
     }
 }

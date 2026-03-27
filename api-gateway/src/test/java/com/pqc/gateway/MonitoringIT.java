@@ -10,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Day 18 모니터링 스택 통합 테스트 — docker-compose 기동 상태에서만 실행.
@@ -35,9 +36,12 @@ class MonitoringIT {
 
     @Test
     void grafana_datasourceHealthApi_returns200() throws Exception {
+        String credentials = System.getenv("IT_ADMIN_CREDENTIALS");
+        assumeTrue(credentials != null, "IT_ADMIN_CREDENTIALS not set — skipping Grafana auth test");
+
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("http://localhost:3001/api/health"))
-                .header("Authorization", "Basic YWRtaW46YWRtaW4=")  // admin:admin
+                .header("Authorization", "Basic " + credentials)
                 .build();
         HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
 

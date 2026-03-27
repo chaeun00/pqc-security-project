@@ -12,5 +12,12 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    exclude: ['**/node_modules/**', '**/e2e/**'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/features/**', 'src/components/**'],
+      thresholds: { lines: 70, functions: 70, branches: 70 },
+    },
   },
 })

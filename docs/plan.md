@@ -3038,3 +3038,66 @@ MonitorPage를 구현하여 CBOM 데이터를 5초 자동 갱신으로 표시하
 1. npm run test:coverage 결과에서 lines/functions/branches 모두 70% 이상
 2. npm run test:e2e 에서 E2E 시나리오 2개 이상 pass
 3. npm run build 오류 0건 완료
+
+---
+## Day 18 보안 취약점 수정 계획 (2026-03-29)
+
+### 목표
+Day 18 인수조건(coverage ≥ 70% · E2E 2개 pass · build 0건)을 CI 재현 가능하게 완성하고,
+자격증명 하드코딩 보안 결함(보안-HIGH)을 제거한다.
+
+### 질문에 대한 답
+1. E2E 테스트 실행 전략 => MSW mock 전용 E2E 방식 확정 가능. 단, onUnhandledRequest: 'bypass' 설정 때문에 handlers에 없는 경로는 조용히 실패함. E2E 스펙에서 호출하는 모든 API 엔드포인트(/api/auth/login, /api/cbom, /api/inventory)가 handlers.ts에 등록되어 있는지 반드시 확인 필요.
+2. MonitoringIT 자격증명 .env 분리 + .gitignore + CI 시크릿 주입 확정 여부? => .gitignore 패턴은 준비됨, CI 시크릿 주입은 미확정. monitoring.integration=true를 CI에 추가할 때 함께 secrets.GRAFANA_ADMIN_PASSWORD를 -Dgrafana.admin.password=${{ secrets.GRAFANA_ADMIN_PASSWORD }} 형태로 주입하는 스텝을 신규 작성해야 함. 이는 Day 19 CI 구성 작업에서 한 번에 처리하는 것이 적절.
+3. monitoring.integration=true — 현재 CI workflow에 있는가? => 없음. Day 19에서 추가 예정.
+
+### Step 1. 보안 결함 제거
+- MonitoringIT.java:40 — System.getenv("IT_ADMIN_CREDENTIALS") 치환
+- E2E 스펙 — process.env.E2E_USER / E2E_PASS 환경변수화
+- .env.e2e.example 템플릿 추가
+
+### Step 2. E2E MSW 설정 확정
+- playwright.config.ts webServer 또는 global-setup MSW 방식 결정
+- npm run test:e2e 1회 pass 확인
+
+### Step 3. 단위 테스트 경계값 보완
+- CbomMetricsTest: null/""/UNKNOWN 3케이스 추가
+- EncryptControllerTest: LOW/MEDIUM never() 검증 추가
+- npm run test:coverage 70%+ pass 확인
+
+### 인수조건
+1. test:coverage Statements ≥ 70%, 종료코드 0
+2. test:e2e 2개 passed
+3. git grep "admin:admin" 0건
+
+---
+## Day 19 세부 계획 — CI 파이프라인 통합 (2026-03-29)
+
+### 목표
+dashboard 단위 테스트 70% 충족 확인 + Java 통합 테스트 자격증명 보안 수정
++ frontend-ci 잡 추가로 PR 시 전체 CI 그린 달성.
+
+### 질문에 대한 답
+1. E2E CI 전략 — MSW global-setup vs E2E 잡 분리? => global-setup 별도 작업 없이 현재 구조 그대로 MSW mock 전용 E2E 가능.
+2. IT_ADMIN_CREDENTIALS — GitHub secret 이미 등록되어 있는가? => 미등록. Day 19에서 신규 추가 필요.
+3. CbomMetricsTest / EncryptControllerTest 모듈 위치? => crypto-engine과 무관. api-gateway 모듈 단독. CI unit-test 잡은 현재 crypto-engine/tests/test_algorithm_strategy.py (Python pytest)만 실행. ./gradlew test (Java)를 실행하는 별도 잡이 없음 → Day 19에서 api-gateway-unit-test 잡 신규 추가 필요.
+
+### Step A. dashboard 단위 테스트 보완
+- A-1: axiosClient401.test.ts — Authorization 헤더 검증 케이스 추가
+- A-2: npm run test:coverage 실행 → lines/functions/branches ≥ 70% 확인
+  (실패 시 InventoryPage/useInventory uncovered 분기 최소 케이스 추가)
+
+### Step B. Java 통합 테스트 보안·경계값 수정
+- B-1: MonitoringIT.java:40 — System.getenv("IT_ADMIN_CREDENTIALS") 치환
+- B-2: CbomMetricsTest — null/""/UNKNOWN riskLevel 3케이스 추가
+- B-3: EncryptControllerTest — LOW/MEDIUM never() 검증 추가
+
+### Step C. frontend-ci 잡 추가 (ci.yml)
+- C-1: Node 20 + cache → lint → test:coverage → build 잡 추가
+- C-2: E2E 전략 확정 (MSW global-setup or 분리 잡)
+- C-3: Trivy 프론트엔드 이미지 스캔 (Dockerfile 존재 시)
+
+### 인수조건
+1. test:coverage lines ≥ 70%, 종료코드 0
+2. git grep "admin:admin" 0건
+3. frontend-ci 잡 PR 시 green

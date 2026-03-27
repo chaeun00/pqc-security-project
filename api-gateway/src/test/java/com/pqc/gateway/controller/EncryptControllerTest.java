@@ -25,6 +25,7 @@ import java.util.Optional;
 
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -178,6 +179,44 @@ class EncryptControllerTest {
                 .andExpect(status().isOk());
 
         verify(cbomMetrics).recordEncrypt("HIGH");
+    }
+
+    // Day 18 — LOW 요청 시 cbomMetrics.recordEncrypt("HIGH") 미호출 확인
+    @Test
+    void encrypt_lowRisk_doesNotInvokeHighMetrics() throws Exception {
+        when(riskClassifier.classify(any())).thenReturn(RiskLevel.LOW);
+        when(cryptoEngineClient.kemInit(any()))
+                .thenReturn(new KemInitResponse(3L, "ML-KEM-512"));
+        when(cryptoEngineClient.kemEncrypt(any(), any(), any()))
+                .thenReturn(new KemEncryptResponse("ML-KEM-512", "ct_512", "aes_ct", "aes_iv"));
+
+        mvc.perform(post("/api/encrypt")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plaintext\":\"aGVsbG8=\"}"))
+                .andExpect(status().isOk());
+
+        verify(cbomMetrics).recordEncrypt("LOW");
+        verify(cbomMetrics, never()).recordEncrypt("HIGH");
+    }
+
+    // Day 18 — MEDIUM 요청 시 cbomMetrics.recordEncrypt("HIGH") 미호출 확인
+    @Test
+    void encrypt_mediumRisk_doesNotInvokeHighMetrics() throws Exception {
+        when(riskClassifier.classify(any())).thenReturn(RiskLevel.MEDIUM);
+        when(cryptoEngineClient.kemInit(any()))
+                .thenReturn(new KemInitResponse(1L, "ML-KEM-768"));
+        when(cryptoEngineClient.kemEncrypt(any(), any(), any()))
+                .thenReturn(new KemEncryptResponse("ML-KEM-768", "ct_768", "aes_ct", "aes_iv"));
+
+        mvc.perform(post("/api/encrypt")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plaintext\":\"aGVsbG8=\"}"))
+                .andExpect(status().isOk());
+
+        verify(cbomMetrics).recordEncrypt("MEDIUM");
+        verify(cbomMetrics, never()).recordEncrypt("HIGH");
     }
 
     // Day 10 — 잘못된 risk_level → 400
