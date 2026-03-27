@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/pqc_alerts.yml"
+
+scrape_configs:
+  - job_name: api-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["api-gateway:8081"]
+
+  - job_name: crypto-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["crypto-engine:8000"]

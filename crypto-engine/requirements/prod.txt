@@ -1,3 +1,4 @@
 # crypto-engine 운영 전용 의존성
 -r base.txt
 gunicorn>=21.2.0
+prometheus-client>=0.20.0

@@ -7,6 +7,7 @@ import com.pqc.gateway.dto.EncryptResponse;
 import com.pqc.gateway.dto.KemEncryptRequest;
 import com.pqc.gateway.dto.KemEncryptResponse;
 import com.pqc.gateway.dto.KemInitResponse;
+import com.pqc.gateway.service.CbomMetrics;
 import com.pqc.gateway.service.RiskClassifier;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -21,15 +22,19 @@ public class EncryptController {
 
     private final CryptoEngineClient cryptoEngineClient;
     private final RiskClassifier riskClassifier;
+    private final CbomMetrics cbomMetrics;
 
-    public EncryptController(CryptoEngineClient cryptoEngineClient, RiskClassifier riskClassifier) {
+    public EncryptController(CryptoEngineClient cryptoEngineClient, RiskClassifier riskClassifier,
+                             CbomMetrics cbomMetrics) {
         this.cryptoEngineClient = cryptoEngineClient;
         this.riskClassifier = riskClassifier;
+        this.cbomMetrics = cbomMetrics;
     }
 
     @PostMapping
     public ResponseEntity<EncryptResponse> encrypt(@Valid @RequestBody EncryptRequest request) {
         RiskLevel risk = riskClassifier.classify(request);
+        cbomMetrics.recordEncrypt(risk.name());
         String kemAlgorithm = riskClassifier.resolveAlgorithm(risk);
         KemInitResponse init = cryptoEngineClient.kemInit(kemAlgorithm);
         KemEncryptResponse enc = cryptoEngineClient.kemEncrypt(kemAlgorithm, risk.name(),

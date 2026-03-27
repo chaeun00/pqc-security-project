@@ -112,6 +112,62 @@ services:
     restart: unless-stopped
 
   # ──────────────────────────────────────────────────────────
+  # prometheus — 메트릭 수집 (Day 17)
+  # ──────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    networks:
+      - pqc-internal
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROMETHEUS_CPU_LIMIT:-0.5}"
+          memory: "${PROMETHEUS_MEM_LIMIT:-256m}"
+    restart: unless-stopped
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────────────
+  # grafana — 모니터링 대시보드 (Day 17)
+  # ──────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    networks:
+      - pqc-internal
+      - pqc-public
+    ports:
+      - "3001:3000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          cpus: "${GRAFANA_CPU_LIMIT:-0.5}"
+          memory: "${GRAFANA_MEM_LIMIT:-256m}"
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ──────────────────────────────────────────────────────────
   # db — PostgreSQL 17 + su-exec (스키마: Step 1-C, CVE-2025-68121 su-exec 교체)
   # ──────────────────────────────────────────────────────────
   db:
@@ -168,4 +224,8 @@ networks:
 # ============================================================
 volumes:
   db-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
     driver: local

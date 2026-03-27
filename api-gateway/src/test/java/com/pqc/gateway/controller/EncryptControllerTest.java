@@ -2,6 +2,7 @@ package com.pqc.gateway.controller;
 
 import com.pqc.gateway.client.CryptoEngineClient;
 import com.pqc.gateway.config.RiskLevel;
+import com.pqc.gateway.service.CbomMetrics;
 import com.pqc.gateway.dto.DsaVerifyResponse;
 import com.pqc.gateway.dto.KemEncryptResponse;
 import com.pqc.gateway.dto.KemInitResponse;
@@ -24,6 +25,7 @@ import java.util.Optional;
 
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -43,6 +45,9 @@ class EncryptControllerTest {
 
     @MockBean
     RiskClassifier riskClassifier;
+
+    @MockBean
+    CbomMetrics cbomMetrics;
 
     private String validToken;
 
@@ -154,6 +159,25 @@ class EncryptControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.algorithm", is("ML-KEM-512")))
                 .andExpect(jsonPath("$.risk_level", is("LOW")));
+    }
+
+    // Day 18 — HIGH 요청 시 cbomMetrics.recordEncrypt("HIGH") 호출 확인
+    @Test
+    void encrypt_highRisk_invokesCbomMetrics() throws Exception {
+        when(riskClassifier.classify(any())).thenReturn(RiskLevel.HIGH);
+        when(riskClassifier.resolveAlgorithm(RiskLevel.HIGH)).thenReturn("ML-KEM-1024");
+        when(cryptoEngineClient.kemInit(any()))
+                .thenReturn(new KemInitResponse(2L, "ML-KEM-1024"));
+        when(cryptoEngineClient.kemEncrypt(any(), any(), any()))
+                .thenReturn(new KemEncryptResponse("ML-KEM-1024", "ct_1024", "aes_ct", "aes_iv"));
+
+        mvc.perform(post("/api/encrypt")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plaintext\":\"aGVsbG8=\",\"risk_level\":\"HIGH\"}"))
+                .andExpect(status().isOk());
+
+        verify(cbomMetrics).recordEncrypt("HIGH");
     }
 
     // Day 10 — 잘못된 risk_level → 400

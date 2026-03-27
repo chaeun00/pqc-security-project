@@ -1,0 +1,21 @@
+groups:
+  - name: pqc_alerts
+    rules:
+      - alert: PqcApiGatewayDown
+        expr: up{job="api-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PQC API Gateway is down"
+          description: "api-gateway has been unreachable for more than 1 minute."
+
+      - alert: PqcHighRiskAlgorithmDetected
+        expr: |
+          sum(increase(cbom_assets_total{risk_level="HIGH"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HIGH risk PQC algorithm transition detected"
+          description: "A HIGH risk algorithm was registered in cbom_assets within the last 5 minutes."

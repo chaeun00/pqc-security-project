@@ -58,7 +58,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,metrics,circuitbreakers,algorithm
+        include: health,metrics,circuitbreakers,algorithm,prometheus
   endpoint:
     health:
       show-details: always

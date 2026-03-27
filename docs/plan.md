@@ -2964,3 +2964,77 @@ MonitorPage를 구현하여 CBOM 데이터를 5초 자동 갱신으로 표시하
 1. http://localhost:3001 Grafana 접근 + Prometheus datasource green
 2. http://localhost:9090/targets — api-gateway UP (up==1)
 3. http://localhost:9090/api/v1/rules — PqcApiGatewayDown 알람 규칙 로드 확인
+
+---
+
+## Day 17 리뷰 결함 수정 (2026-03-28)
+
+### 목표(Goal)
+보안 설정 강화 + `cbom_assets_total` 메트릭 구현으로 Day 17에서 식별된 보안·기능 결함 3건을 모두 제거한다.
+
+### 질문에 대한 답
+1. Prometheus 9090 포트를 외부에서 직접 접근해야 하는 운영 요구사항이 있는가? => 필요 없다.
+2. `cbom_assets_total` Counter는 어느 서비스 레이어에서 발행해야 하는가? => 발행 지점은 crypto-engine이 맞음. 단, 현재 구현에서 누락된 상태.
+3. `.env` 파일을 Git에서 관리하는가, 아니면 CI/CD 시크릿으로 주입하는가? => git에는 추적되지 않으나, `/config/dashboard.env`의 `GRAFANA_ADMIN_PASSWORD`가 관리되므로 해당 것으로 주입. 
+
+### 범위(Scope — Steps)
+
+**Step A — 보안 설정 강화**
+- `.env.example`에 `GRAFANA_ADMIN_PASSWORD=changeme` 항목 추가
+- `.env`에 실제 강한 패스워드 값 설정 (Git 미추적 파일)
+- `docker-compose.yml` prometheus 서비스에서 `pqc-public` 네트워크 제거 → `pqc-internal`만 유지, `ports` 항목 제거
+
+**Step B — cbom_assets_total Counter 구현**
+- api-gateway Java 코드에서 CBOM 분석 결과를 처리하는 지점에 Micrometer `Counter.builder("cbom_assets_total").tag("risk_level", ...)` 등록
+- `PqcHighRiskAlgorithmDetected` 알람 발동 가능 상태 확보
+
+**Step C — 자동화 테스트 3건 추가**
+- `/metrics` 엔드포인트에 `cbom_assets_total` 포함 여부 assert
+- Prometheus `/api/v1/rules` 알람 로드 assert
+- (통합테스트 환경 기준) Grafana datasource health API 200 assert
+
+### 인수조건(Acceptance Criteria)
+1. `docker-compose up` 후 Prometheus UI에서 9090 포트가 localhost 외부에서 접근 불가
+2. CBOM 스캔 API 호출 후 `/metrics`에 `cbom_assets_total{risk_level="HIGH"}` 값 증가 확인
+3. 신규 테스트 3건이 CI에서 green
+
+---
+
+## Day 18 — 컴포넌트 테스트 & E2E 세부 계획 (2026-03-28)
+
+### 현재 상태 요약
+- Vitest + RTL + MSW: 설치됨, 테스트 파일 11개 존재
+- @vitest/coverage-v8: 설치됨, but vite.config.ts coverage 블록 없음
+- test:coverage 스크립트: package.json에 없음
+- Playwright: 미설치 (package.json에 없음)
+- npm run build: tsc --noEmit + vite build — 현재 통과 여부 미확인
+
+### 목표(Goal)
+기존 Vitest 테스트 11개를 커버리지 70%+ 기준으로 보강하고, Playwright E2E 2개를 신규 추가하여 npm run build까지 CI 체인을 완성한다.
+
+### 질문에 대한 답
+1. E2E 테스트는 실제 백엔드를 띄운 상태에서 실행하는가, 아니면 MSW로 브라우저 mock 처리하는가? => MSW browser mock 권장. 단 Playwright + MSW browser worker 조합은 playwright.config.ts에서 webServer + public/mockServiceWorker.js 로드 순서를 맞춰야 함. 설정 누락 시 E2E가 실제 API 호출을 시도해 무조건 실패.
+2. 커버리지 기준 파일 범위를 src/features/** + src/components/**로 한정할지, src/** 전체로 잡을지? => src/features/** + src/components/** 한정 권장.
+
+### 범위(Scope — Steps)
+
+**Step A — 커버리지 설정 + 임계값 적용**
+- vite.config.ts test 블록에 coverage: { provider: 'v8', reporter: ['text', 'lcov'], thresholds: { lines: 70, functions: 70, branches: 70 } } 추가
+- package.json scripts에 "test:coverage": "vitest run --coverage" 추가
+- npm run test:coverage 실행 → 70% 미달 파일 식별 → 해당 컴포넌트 테스트 보완
+
+**Step B — Playwright E2E 설치 및 시나리오 2개 작성**
+- @playwright/test + Chromium 설치 (npm install -D @playwright/test && npx playwright install chromium)
+- playwright.config.ts 생성 (baseURL: http://localhost:5173, MSW browser mock 활성화 또는 백엔드 연동)
+- E2E 시나리오 ①: 로그인 → CBOM 목록 진입 → 알고리즘 필터 동작 확인
+- E2E 시나리오 ②: CBOM → 수동 등록 폼 작성 → 저장 → 목록 반영 확인
+- package.json scripts에 "test:e2e": "playwright test" 추가
+
+**Step C — npm run build 통과 확인**
+- tsc --noEmit 오류 0건 확인 후 vite build 실행
+- 타입 오류 발생 시 해당 파일만 최소 수정
+
+### 인수조건(Acceptance Criteria)
+1. npm run test:coverage 결과에서 lines/functions/branches 모두 70% 이상
+2. npm run test:e2e 에서 E2E 시나리오 2개 이상 pass
+3. npm run build 오류 0건 완료

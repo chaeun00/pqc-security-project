@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_client import make_asgi_app as _prometheus_asgi
 
 from app.algorithm_strategy import DSA_ALGORITHM, KEM_ALGORITHM, KEM_META
 from app.routers import dsa, kem
@@ -56,6 +57,8 @@ app = FastAPI(title="Crypto Engine", version="1.0.0", lifespan=lifespan)
 
 app.include_router(kem.router, prefix="/kem", tags=["KEM"])
 app.include_router(dsa.router, prefix="/dsa", tags=["DSA"])
+
+app.mount("/metrics", _prometheus_asgi())
 
 
 @app.get("/health")

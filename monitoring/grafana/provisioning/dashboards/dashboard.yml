@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PQC Dashboards
+    orgId: 1
+    folder: PQC
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
