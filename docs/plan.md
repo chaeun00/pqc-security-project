@@ -2901,3 +2901,66 @@ MonitorPage를 구현하여 CBOM 데이터를 5초 자동 갱신으로 표시하
 - refetchInterval:5000 설정으로 5s 자동 갱신
 - isError 시 오류 배지 노출
 - MonitorPage.test.tsx 전체 케이스 green
+
+---
+
+## Day 16 리뷰 항목 수정 계획 (2026-03-27)
+
+### 질문에 대한 답
+1. isError UX — 배지+early return vs staleTime 유지 => 보안 프로젝트 기준: early return 권장.
+2. 로딩 테스트 전략 — delay() 추가 vs 케이스 삭제 => MSW delay('infinite') 핸들러 추가 권장.
+3. bar aria-label 테스트 — 텍스트 검증 vs width style % => aria-label 텍스트 검증 권장. width style은 검증 불필요.
+
+### 타당성 검증 요약
+- [위험-중] WSL 환경 문제 → 코드 수정 대상 아님 (환경 확인으로 해소)
+- [위험-저] 로딩 테스트 flaky → 타당, 수정 필요
+- [위험-저] isError 빈 테이블 → 타당, UX 스펙 결정 후 수정
+- 테스트 공백 2개 (빈 배열, aria-label) → 타당, 테스트 추가 필요
+
+### 수정 범위 (3 Steps)
+1. 로딩 테스트 flaky 수정 (MonitorPage.test.tsx — delay 추가)
+2. isError early return 추가 (MonitorPage.tsx)
+3. 누락 테스트 2개 추가 (MonitorPage.test.tsx)
+
+### 인수조건
+1. vitest 5회 반복 전 케이스 green
+2. isError 시 빈 테이블 미노출
+3. 총 6케이스 이상 green
+
+---
+
+## Day 17 세부 계획 — Prometheus/Grafana 알람 연동 (2026-03-28)
+
+### 전제 조건 확인
+- api-gateway: micrometer-registry-prometheus 미설치, prometheus endpoint 미노출
+- docker-compose: Prometheus/Grafana 서비스 없음, monitoring/ 디렉터리 없음
+
+### 질문에 대한 답
+1. Grafana 포트 — 3001 고정 => 3001 고정 권장.
+2. 알람 규칙 타깃 — PQC 도메인 지표 포함 권장 => up == 0 1개 + HIGH 위험 임계치 1개, 총 2개 권장.
+
+### Step 1 — api-gateway 메트릭 엔드포인트 활성화
+- build.gradle: micrometer-registry-prometheus 의존성 추가
+- application.yml: management.endpoints.web.exposure.include에 prometheus 추가
+- 검증: http://api-gateway:8081/actuator/prometheus 200 응답
+
+### Step 2 — 모니터링 설정 파일 생성 (신규 4개)
+- monitoring/prometheus/prometheus.yml: scrape api-gateway:8081, interval 15s
+- monitoring/prometheus/rules/pqc_alerts.yml: PqcApiGatewayDown 알람 (up==0, severity: critical)
+- monitoring/grafana/provisioning/datasources/prometheus.yml: Prometheus datasource 자동 프로비저닝
+- monitoring/grafana/provisioning/dashboards/dashboard.yml: 대시보드 폴더 설정
+
+### Step 3 — docker-compose.yml 서비스 추가
+- prometheus: prom/prometheus:v2.51.0, pqc-internal, port 9090
+- grafana: grafana/grafana:10.4.2, pqc-internal+pqc-public, port 3001→3000
+- 볼륨: prometheus-data, grafana-data 추가
+
+### Step 4 - crypto-engine 메트릭
+- requirements/prod.txt — prometheus-client 1줄 추가
+- crypto-engine/app/main.py — make_asgi_app() 마운트 (~5줄)
+- prometheus.yml — scrape job 1개 추가 (이미 Step 2에서 파일 생성)
+
+### 인수조건
+1. http://localhost:3001 Grafana 접근 + Prometheus datasource green
+2. http://localhost:9090/targets — api-gateway UP (up==1)
+3. http://localhost:9090/api/v1/rules — PqcApiGatewayDown 알람 규칙 로드 확인
