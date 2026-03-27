@@ -2874,3 +2874,30 @@ CbomPage.test.tsx에 AlgorithmSwitchPanel 연결 케이스를 추가하여 Day 1
 - CbomPage.test.tsx AlgorithmSwitchPanel 연결 케이스 1건 이상 추가 및 green
 - 기존 CbomPage 테스트 8개 모두 통과
 - Day 15 인수조건 ❌ 항목 전부 해소
+
+---
+
+## Day 16 — 실시간 모니터링 UI 세부 계획 (2026-03-27)
+
+### 목표
+MonitorPage를 구현하여 CBOM 데이터를 5초 자동 갱신으로 표시하는 통계 카드·차트·이력 테이블 제공
+
+### 전제
+- 데이터 소스: /api/cbom 재활용 (별도 엔드포인트 없을 경우)
+- 차트: CSS width% 기반 bar (외부 라이브러리 없이)
+- 오류 배지: isError(API fetch 실패) 시 표시
+
+### 질문에 대한 답
+1. 데이터 소스 → /api/cbom 재활용. 별도 /api/monitor 없음. 프론트에서 응답 집계.
+2. 차트 → CSS width% 기반 bar 직접 구현. recharts 등 외부 라이브러리 미사용.
+3. 오류 배지 → isError (API fetch 실패) 시 배지 표시. HIGH 위험도 알림이 아님.
+
+### 범위 (Steps)
+1. useMonitor.ts — /api/cbom + refetchInterval:5000, isError 노출
+2. MonitorPage.tsx — 통계 카드 4개(전체/HIGH/MEDIUM/LOW) + 알고리즘별 bar + 최근 이력 테이블 5건
+3. MonitorPage.test.tsx — 로딩·정상 렌더·isError 배지·최근 5건 정렬 케이스
+
+### 인수조건
+- refetchInterval:5000 설정으로 5s 자동 갱신
+- isError 시 오류 배지 노출
+- MonitorPage.test.tsx 전체 케이스 green
