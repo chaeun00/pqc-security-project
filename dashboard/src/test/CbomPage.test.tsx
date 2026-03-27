@@ -85,6 +85,31 @@ describe('CbomPage', () => {
     await waitFor(() => expect(screen.getByText('—')).toBeInTheDocument())
   })
 
+  it('AlgorithmSwitchPanel 연결 — 전환 버튼 클릭 시 패널과 currentAlgorithm 표시', async () => {
+    renderCbom()
+    await waitFor(() => expect(screen.getByText('총 10건')).toBeInTheDocument())
+
+    // id=1, algorithm='ML-KEM-768' 행의 전환 버튼 클릭
+    fireEvent.click(screen.getByLabelText('알고리즘 전환 1'))
+
+    // <th>알고리즘 전환</th>과 중복되므로 heading role로 패널 <h3> 특정
+    expect(screen.getByRole('heading', { name: '알고리즘 전환' })).toBeInTheDocument()
+    // 패널 내 currentAlgorithm이 <strong>으로 표시됨
+    expect(screen.getByText('ML-KEM-768', { selector: 'strong' })).toBeInTheDocument()
+  })
+
+  it('AlgorithmSwitchPanel 연결 — 같은 버튼 재클릭 시 패널 토글 닫힘', async () => {
+    renderCbom()
+    await waitFor(() => expect(screen.getByText('총 10건')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText('알고리즘 전환 1'))
+    expect(screen.getByRole('heading', { name: '알고리즘 전환' })).toBeInTheDocument()
+
+    // 재클릭 → setSwitchTarget(null) → 패널 unmount
+    fireEvent.click(screen.getByLabelText('알고리즘 전환 1'))
+    expect(screen.queryByRole('heading', { name: '알고리즘 전환' })).not.toBeInTheDocument()
+  })
+
   it('뷰탭 전환(목록→우선순위) 시 필터·페이지 상태 유지', async () => {
     renderCbom()
     await waitFor(() => expect(screen.getByText('총 10건')).toBeInTheDocument())

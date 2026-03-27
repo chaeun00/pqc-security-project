@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useCbomList } from './useCbomList'
 import CbomPriorityView from './CbomPriorityView'
+import AlgorithmSwitchPanel from './AlgorithmSwitchPanel'
 
 const PAGE_SIZE = 10
 
@@ -18,6 +19,7 @@ export default function CbomPage() {
   const [algorithmFilter, setAlgorithmFilter] = useState('')
   const [page, setPage] = useState(1)
   const [viewTab, setViewTab] = useState<ViewTab>('list')
+  const [switchTarget, setSwitchTarget] = useState<{ id: string; algorithm: string } | null>(null)
 
   if (isLoading) return <div className="p-4">로딩 중...</div>
   if (isError) return <div className="p-4 text-red-600">데이터를 불러오지 못했습니다.</div>
@@ -96,21 +98,48 @@ export default function CbomPage() {
                 <th className="border px-3 py-2">타입</th>
                 <th className="border px-3 py-2">위험도</th>
                 <th className="border px-3 py-2">등록일</th>
+                <th className="border px-3 py-2">알고리즘 전환</th>
               </tr>
             </thead>
             <tbody>
               {paged.map((entry) => (
-                <tr key={entry.id} className="hover:bg-gray-50">
-                  <td className="border px-3 py-2">{entry.id}</td>
-                  <td className="border px-3 py-2">{entry.algorithm}</td>
-                  <td className="border px-3 py-2">{entry.type}</td>
-                  <td className="border px-3 py-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${RISK_BADGE[entry.risk_level] ?? RISK_BADGE_DEFAULT}`}>
-                      {entry.risk_level}
-                    </span>
-                  </td>
-                  <td className="border px-3 py-2">{entry.registered_at ? entry.registered_at.slice(0, 10) : '—'}</td>
-                </tr>
+                <Fragment key={entry.id}>
+                  <tr className="hover:bg-gray-50">
+                    <td className="border px-3 py-2">{entry.id}</td>
+                    <td className="border px-3 py-2">{entry.algorithm}</td>
+                    <td className="border px-3 py-2">{entry.type}</td>
+                    <td className="border px-3 py-2">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${RISK_BADGE[entry.risk_level] ?? RISK_BADGE_DEFAULT}`}>
+                        {entry.risk_level}
+                      </span>
+                    </td>
+                    <td className="border px-3 py-2">{entry.registered_at ? entry.registered_at.slice(0, 10) : '—'}</td>
+                    <td className="border px-3 py-2">
+                      <button
+                        onClick={() =>
+                          setSwitchTarget(
+                            switchTarget?.id === String(entry.id) ? null : { id: String(entry.id), algorithm: entry.algorithm },
+                          )
+                        }
+                        className="px-2 py-0.5 border rounded text-xs"
+                        aria-label={`알고리즘 전환 ${entry.id}`}
+                      >
+                        전환
+                      </button>
+                    </td>
+                  </tr>
+                  {switchTarget?.id === String(entry.id) && (
+                    <tr>
+                      <td colSpan={6} className="border px-3 py-2">
+                        <AlgorithmSwitchPanel
+                          assetId={switchTarget.id}
+                          currentAlgorithm={switchTarget.algorithm}
+                          onClose={() => setSwitchTarget(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
