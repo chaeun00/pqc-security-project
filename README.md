@@ -43,11 +43,12 @@ dashboard (React)  ← CBOM 시각화 / Prometheus·Grafana 연동
 - Feign Client 비동기 호출 + Fallback + Stateless 원칙
 - Algorithm Agility 인터페이스 + SNDL High-Risk 우선순위 라우팅
 
-### Phase 3 — React CBOM 대시보드 (Week 5–6)
+### Phase 3 — React CBOM 대시보드 (Week 5–6) ✅ 완료
 - TanStack Query + Zustand 상태 관리
 - CBOM 시각화, 우선순위 뷰, 실시간 모니터링 UI
 - 수동 재고(Inventory) 등록 UI (레거시 자산 입력·편집·삭제)
 - Prometheus/Grafana 알람 연동
+- 최종 검증: `make test-dct` + 환경변수 교체 기동 테스트 완료 (2026-03-30)
 
 ## 디렉터리 구조
 
@@ -135,8 +136,11 @@ make setup
 # 4. Step 1-A 검증 (Cosign keyless 서명 검증, rev.7)
 make test-dct
 
-# 5. 서비스 실행 (Step 1-B Dockerfile 완료 후)
+# 5. 서비스 실행
 make up
+
+# (선택) 환경변수 교체 기동 테스트 (인수조건 3 검증)
+docker compose --env-file .env.test up -d
 
 # 5. 헬스체크 및 Resource Limits 확인
 curl http://localhost:8000/health           # crypto-engine

@@ -3149,6 +3149,6 @@ Day 20 docs 업데이트 실제 최소 범위:
 - docs/review.md Day 20 최종 항목 Append
 
 ### 인수조건
-1. make test-dct 종료코드 0, Cosign verify 전 이미지 통과 로그 출력
-2. docker-compose --env-file .env.test up -d 후 모든 서비스 Up + /actuator/health HTTP 200
-3. docs/plan.md Phase 3 인수조건 3개 전부 - [x] 체크, docs/review.md Day 20 항목 Append 완료
+- [x] 1. make test-dct 종료코드 0, Cosign verify 전 이미지 통과 로그 출력
+- [x] 2. docker-compose --env-file .env.test up -d 후 모든 서비스 Up + /actuator/health HTTP 200
+- [x] 3. docs/plan.md Phase 3 인수조건 3개 전부 - [x] 체크, docs/review.md Day 20 항목 Append 완료
